@@ -1,0 +1,42 @@
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: dfs-aip-frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - dfs-aip-network
+
+  backend:
+    build:
+      context: ..
+      dockerfile: docker-webinterface/backend/Dockerfile
+    container_name: dfs-aip-backend
+    environment:
+      # Auto-update configuration
+      - AUTO_UPDATE_ENABLED=true
+      - AUTO_UPDATE_HOUR=2    # 2 AM (24-hour format)
+      - AUTO_UPDATE_MINUTE=0  # 00 minutes
+    volumes:
+      - data:/app/data      # Profiles JSON
+      - output:/app/output  # Generated PDFs
+      - aip-cache:/app/cache  # Cache
+    restart: unless-stopped
+    networks:
+      - dfs-aip-network
+
+
+networks:
+  dfs-aip-network:
+    driver: bridge
+
+
+volumes:
+  data:
+  output:
+  aip-cache:
