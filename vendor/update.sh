@@ -49,6 +49,12 @@ if [ -f "$TMP_DIR/src/COPYING.md" ]; then
   cp -a "$TMP_DIR/src/COPYING.md" "$REPO_ROOT/COPYING.md"
 fi
 
+# Record the pinned upstream SHA inside the backend package. The backend Docker
+# image bundles vendor/dfs-aip/, but Release Please only attributes commits to a
+# package by path -- and vendor/ is outside webui/backend/. Writing the ref here
+# means every vendored update touches the backend package and bumps its version.
+echo "$RESOLVED_SHA" > "$REPO_ROOT/webui/backend/VENDOR_REF"
+
 echo
 echo "Done. Vendored upstream commit:"
 echo "  $RESOLVED_SHA"
@@ -56,4 +62,5 @@ echo
 echo "Next steps:"
 echo "  1. Update the pinned SHA in vendor/README.md to $RESOLVED_SHA"
 echo "  2. Review changes:  git status && git diff --stat"
-echo "  3. Commit the vendored update."
+echo "  3. Commit with a conventional message so the backend version bumps,"
+echo "     e.g.:  git commit -m 'fix(backend): sync vendored dfs-aip to $RESOLVED_SHA'"

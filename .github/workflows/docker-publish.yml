@@ -11,6 +11,8 @@ env:
 jobs:
   build-backend:
     name: Build and push backend
+    # Release Please tags backend releases as "backend-vX.Y.Z".
+    if: startsWith(github.event.release.tag_name, 'backend-v')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -27,15 +29,22 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Derive version from tag
+        id: version
+        run: |
+          VERSION="${GITHUB_REF_NAME#backend-v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "major_minor=${VERSION%.*}" >> "$GITHUB_OUTPUT"
+
       - name: Extract metadata for backend
         id: meta-backend
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.OWNER }}/dfs-aip-backend
           tags: |
-            type=ref,event=branch
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=${{ steps.version.outputs.version }}
+            type=raw,value=${{ steps.version.outputs.major_minor }}
+            type=raw,value=latest
             type=sha,prefix=sha-
 
       - name: Set up Docker Buildx
@@ -54,6 +63,8 @@ jobs:
 
   build-frontend:
     name: Build and push frontend
+    # Release Please tags frontend releases as "frontend-vX.Y.Z".
+    if: startsWith(github.event.release.tag_name, 'frontend-v')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -70,15 +81,22 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Derive version from tag
+        id: version
+        run: |
+          VERSION="${GITHUB_REF_NAME#frontend-v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "major_minor=${VERSION%.*}" >> "$GITHUB_OUTPUT"
+
       - name: Extract metadata for frontend
         id: meta-frontend
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.OWNER }}/dfs-aip-frontend
           tags: |
-            type=ref,event=branch
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=${{ steps.version.outputs.version }}
+            type=raw,value=${{ steps.version.outputs.major_minor }}
+            type=raw,value=latest
             type=sha,prefix=sha-
 
       - name: Set up Docker Buildx

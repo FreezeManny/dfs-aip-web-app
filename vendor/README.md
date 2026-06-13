@@ -30,4 +30,10 @@ and refreshes `../COPYING.md`. Afterwards:
 
 1. Update the **Pinned commit** line above to the SHA the script prints.
 2. Review with `git status` / `git diff --stat`.
-3. Commit the vendored update.
+3. Commit the vendored update with a conventional commit (e.g. `fix(backend): ...`).
+
+The script also writes the resolved SHA to [`../webui/backend/VENDOR_REF`](../webui/backend/VENDOR_REF).
+That file lives inside the backend package on purpose: the backend image bundles this vendored
+code, so a vendor update must bump the **backend** version. Release Please attributes commits to a
+package by path, and `vendor/` is outside `webui/backend/`, so the `VENDOR_REF` file is what links
+a vendor sync to a backend release.

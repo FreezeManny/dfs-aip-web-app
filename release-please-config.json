@@ -1,0 +1,16 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "separate-pull-requests": true,
+  "packages": {
+    "webui/backend": {
+      "release-type": "simple",
+      "component": "backend",
+      "package-name": "dfs-aip-backend"
+    },
+    "webui/frontend": {
+      "release-type": "node",
+      "component": "frontend",
+      "package-name": "dfs-aip-frontend"
+    }
+  }
+}
