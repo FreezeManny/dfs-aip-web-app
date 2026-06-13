@@ -9,9 +9,55 @@ browse run history, and download the generated (OCR'd) PDFs — all from the bro
 
 ## Quick start
 
+Run the published images from the GitHub Container Registry — no build needed:
+
+```sh
+docker compose up -d
+# then open http://localhost:8080
+```
+
+This uses the [`docker-compose.yaml`](docker-compose.yaml) in the project root, which pulls
+`ghcr.io/freezemanny/dfs-aip-frontend` and `ghcr.io/freezemanny/dfs-aip-backend`:
+
+```yaml
+services:
+  frontend:
+    image: ghcr.io/freezemanny/dfs-aip-frontend:latest
+    container_name: dfs-aip-frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - dfs-aip-network
+
+  backend:
+    image: ghcr.io/freezemanny/dfs-aip-backend:latest
+    container_name: dfs-aip-backend
+    environment:
+      # Auto-update configuration
+      - AUTO_UPDATE_ENABLED=true
+      - AUTO_UPDATE_HOUR=2    # 2 AM (24-hour format)
+      - AUTO_UPDATE_MINUTE=0  # 00 minutes
+    volumes:
+      - data:/app/data      # Profiles JSON
+      - output:/app/output  # Generated PDFs
+      - aip-cache:/app/cache  # Cache
+    restart: unless-stopped
+    networks:
+      - dfs-aip-network
+
+volumes:
+  data:
+  output:
+  aip-cache:
+```
+
+To build the images locally from source instead:
+
 ```sh
 docker compose -f webui/docker-compose.yaml up --build -d
-# then open http://localhost:8080
 ```
 
 See [`webui/README.md`](webui/README.md) for configuration, environment variables, and the API.
