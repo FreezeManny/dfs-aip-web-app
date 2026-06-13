@@ -21,13 +21,13 @@ A simple web-based interface for the DFS AIP (Aeronautical Information Publicati
 ### Using Docker Compose (Recommended)
 
 ```bash
-cd docker-webinterface
+# From the repository root:
 
 # Build and start both containers
-docker-compose up --build -d
+docker compose -f webui/docker-compose.yaml up --build -d
 
 # View logs
-docker-compose logs -f
+docker compose -f webui/docker-compose.yaml logs -f
 
 # Access the web interface
 open http://localhost:8080
@@ -118,7 +118,7 @@ Profiles are stored in `/app/data/profiles.json`:
 ## Directory Structure
 
 ```
-docker-webinterface/
+webui/
 ├── backend/
 │   ├── Dockerfile        # Backend container
 │   ├── main.py           # FastAPI application
@@ -127,22 +127,21 @@ docker-webinterface/
 │   ├── Dockerfile        # Frontend container (Nginx)
 │   ├── nginx.conf        # Nginx configuration
 │   ├── src/
-│   │   ├── App.vue
-│   │   ├── api.ts        # API client
+│   │   ├── App.tsx
+│   │   ├── lib/api.ts    # API client
 │   │   └── components/
-│   │       ├── ProfileSettings.vue
-│   │       ├── LogViewer.vue
-│   │       ├── DocumentList.vue
-│   │       └── StatusBar.vue
+│   │       ├── ProfilesSection.tsx
+│   │       ├── DocumentsSection.tsx
+│   │       ├── RunHistoryTable.tsx
+│   │       └── ui/       # shadcn/ui primitives
 │   ├── package.json
 │   └── vite.config.ts
-├── data/                 # Mounted volume (shared)
-│   ├── config.json
-│   ├── output/           # Generated PDFs
-│   └── cache/            # AIP cache
 ├── docker-compose.yaml
 └── README.md
 ```
+
+> The DFS AIP tool itself is vendored at the repo root under `vendor/dfs-aip/`; the backend
+> image copies it in at build time. See [`../vendor/README.md`](../vendor/README.md).
 
 ## Screenshots
 

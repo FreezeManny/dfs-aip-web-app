@@ -15,7 +15,7 @@ services:
   backend:
     build:
       context: ..
-      dockerfile: docker-webinterface/backend/Dockerfile
+      dockerfile: webui/backend/Dockerfile
     container_name: dfs-aip-backend
     environment:
       # Auto-update configuration

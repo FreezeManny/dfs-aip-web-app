@@ -9,14 +9,14 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies first (better layer caching)
-COPY basic/requirements.txt aip-requirements.txt
-COPY docker-webinterface/backend/requirements.txt .
+COPY vendor/dfs-aip/requirements.txt aip-requirements.txt
+COPY webui/backend/requirements.txt .
 RUN pip install --no-cache-dir -r aip-requirements.txt -r requirements.txt
 
 # Copy application code
-COPY basic/aip.py .
-COPY basic/aip/ aip/
-COPY docker-webinterface/backend/main.py .
+COPY vendor/dfs-aip/aip.py .
+COPY vendor/dfs-aip/aip/ aip/
+COPY webui/backend/main.py .
 
 # Create data directories
 RUN mkdir -p data output cache
