@@ -29,8 +29,6 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
-    networks:
-      - dfs-aip-network
 
   backend:
     image: ghcr.io/freezemanny/dfs-aip-backend:latest
@@ -45,8 +43,6 @@ services:
       - output:/app/output  # Generated PDFs
       - aip-cache:/app/cache  # Cache
     restart: unless-stopped
-    networks:
-      - dfs-aip-network
 
 volumes:
   data:
