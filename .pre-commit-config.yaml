@@ -1,0 +1,16 @@
+# Enforces Conventional Commits on every commit message.
+# Install once per clone:  pre-commit install --install-hooks
+#   (this picks up the commit-msg hook via default_install_hook_types below)
+default_install_hook_types:
+  - commit-msg
+
+repos:
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v4.4.0
+    hooks:
+      - id: conventional-pre-commit
+        stages: [commit-msg]
+        # Listing types explicitly overrides the defaults, so the full default
+        # set is repeated here plus `wip` for work-in-progress commits.
+        # Keep this in sync with allowed-commit-types in .github/workflows/commit-lint.yml.
+        args: [--strict, --verbose, build, chore, ci, docs, feat, fix, perf, refactor, revert, style, test, wip]
