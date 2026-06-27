@@ -338,7 +338,7 @@ async def run_update(profile_name: str | None = None):
                 )
                 stdout, stderr = await proc.communicate()
                 if proc.returncode != 0:
-                    _log_progress(profile_name_str, "toc_fetch", f"Failed: {stderr.decode()[:200]}", "error")
+                    _log_progress(profile_name_str, "toc_fetch", f"Failed: {stderr.decode()[-1500:]}", "error")
                     continue
                 _log_progress(profile_name_str, "toc_fetch", "TOC fetched successfully", "success")
 
@@ -394,7 +394,7 @@ async def run_update(profile_name: str | None = None):
                         size_mb = output_path.stat().st_size / (1024 * 1024)
                         _log_progress(profile_name_str, "pdf_gen", f"PDF complete ({size_mb:.1f} MB)", "success")
                     else:
-                        _log_progress(profile_name_str, "pdf_gen", f"Failed: {stderr.decode()[:200]}", "error")
+                        _log_progress(profile_name_str, "pdf_gen", f"Failed: {stderr.decode()[-1500:]}", "error")
                         continue
 
                 # Check if we need to generate OCR version
