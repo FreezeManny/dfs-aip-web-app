@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.4](https://github.com/FreezeManny/dfs-aip-web-app/compare/backend-v1.0.3...backend-v1.0.4) (2026-09-21)
+
+
+### Bug Fixes
+
+* **deps:** update uvicorn requirement from &gt;=0.52.4 to &gt;=0.53.0 in /webui/backend in the backend group ([#25](https://github.com/FreezeManny/dfs-aip-web-app/issues/25)) ([cc73a0a](https://github.com/FreezeManny/dfs-aip-web-app/commit/cc73a0aab331b827088ba678a9464785dd9f405f))
+
 ## [1.0.3](https://github.com/FreezeManny/dfs-aip-web-app/compare/backend-v1.0.2...backend-v1.0.3) (2026-09-13)
 
 
