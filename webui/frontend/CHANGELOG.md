@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.3](https://github.com/FreezeManny/dfs-aip-web-app/compare/frontend-v1.0.2...frontend-v1.0.3) (2026-09-27)
+
+
+### Bug Fixes
+
+* **deps:** bump the frontend group in /webui/frontend with 4 updates ([#29](https://github.com/FreezeManny/dfs-aip-web-app/issues/29)) ([326aff6](https://github.com/FreezeManny/dfs-aip-web-app/commit/326aff6e489dc63d54588c118bf2290f65eff24f))
+* **deps:** bump the frontend group in /webui/frontend with 8 updates ([#26](https://github.com/FreezeManny/dfs-aip-web-app/issues/26)) ([f8453a3](https://github.com/FreezeManny/dfs-aip-web-app/commit/f8453a352afad154b8b13a77e3e7267d1834bbe5))
+
 ## [1.0.2](https://github.com/FreezeManny/dfs-aip-web-app/compare/frontend-v1.0.1...frontend-v1.0.2) (2026-09-13)
 
 
