@@ -7,7 +7,7 @@ import { RunHistoryTable } from "@/components/RunHistoryTable";
 import { CleanupButton } from "@/components/CleanupButton";
 import { useTheme } from "@/lib/theme-context";
 import { Button } from "@/components/ui/button";
-import { Toaster } from "sonner";
+import { toast, Toaster } from "sonner";
 import { Moon, Sun } from "lucide-react";
 
 function AppContent() {
@@ -25,13 +25,22 @@ function AppContent() {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([api.getProfiles(), api.getDocuments()]).then(
-      ([loadedProfiles, loadedDocuments]) => {
-        if (cancelled) return;
-        setProfiles(loadedProfiles);
-        setDocuments(loadedDocuments);
-      }
-    );
+    api.getProfiles()
+      .then((loadedProfiles) => {
+        if (!cancelled) setProfiles(loadedProfiles);
+      })
+      .catch((error) => {
+        console.error("Failed to load profiles:", error);
+        toast.error("Failed to load profiles");
+      });
+    api.getDocuments()
+      .then((loadedDocuments) => {
+        if (!cancelled) setDocuments(loadedDocuments);
+      })
+      .catch((error) => {
+        console.error("Failed to load documents:", error);
+        toast.error("Failed to load documents");
+      });
     return () => {
       cancelled = true;
     };
