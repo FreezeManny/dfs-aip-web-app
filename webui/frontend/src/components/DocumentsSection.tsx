@@ -107,7 +107,7 @@ export function DocumentsSection({ documents, onDocumentsChange }: DocumentsSect
           return (
             <div className="text-right space-x-2">
               <Button size="sm" variant="outline" asChild>
-                <a href={api.getDocumentUrl(d.path)} target="_blank" rel="noopener">
+                <a href={api.getDocumentUrl(d.path)} download={d.name} rel="noopener">
                   <Download className="mr-1 h-4 w-4" /> PDF
                 </a>
               </Button>
@@ -118,7 +118,7 @@ export function DocumentsSection({ documents, onDocumentsChange }: DocumentsSect
                 asChild={!!ocrDoc}
               >
                 {ocrDoc ? (
-                  <a href={api.getDocumentUrl(ocrDoc.path)} target="_blank" rel="noopener">
+                  <a href={api.getDocumentUrl(ocrDoc.path)} download={ocrDoc.name} rel="noopener">
                     <Download className="mr-1 h-4 w-4" /> OCR
                   </a>
                 ) : (

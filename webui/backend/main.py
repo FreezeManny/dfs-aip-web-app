@@ -605,8 +605,17 @@ def list_documents():
     return {"documents": sorted(documents, key=lambda x: x["modified"], reverse=True)}
 
 
+class FastFileResponse(FileResponse):
+    """FileResponse with 2MB chunk size for high-throughput streaming of large files."""
+    chunk_size = 2 * 1024 * 1024
+
+    def __init__(self, *args, chunk_size: int = 2 * 1024 * 1024, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.chunk_size = chunk_size
+
+
 @app.get("/api/documents/{profile}/{filename}")
-def download_document(profile: str, filename: str):
+def download_document(profile: str, filename: str, preview: bool = False):
     # Validate path to prevent directory traversal attacks
     file_path = _validate_path(OUTPUT_DIR, profile, filename)
     
@@ -615,7 +624,15 @@ def download_document(profile: str, filename: str):
     if not file_path.is_file():
         raise HTTPException(400, "Invalid path: not a file")
     
-    return FileResponse(file_path, media_type="application/pdf", filename=filename)
+    media_type = "application/pdf" if preview else "application/octet-stream"
+    content_disposition_type = "inline" if preview else "attachment"
+    
+    return FastFileResponse(
+        file_path,
+        media_type=media_type,
+        filename=filename,
+        content_disposition_type=content_disposition_type,
+    )
 
 
 @app.delete("/api/documents/{profile}/{filename}")
