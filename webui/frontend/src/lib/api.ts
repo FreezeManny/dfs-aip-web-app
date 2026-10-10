@@ -1,5 +1,12 @@
 const API_BASE = "/api";
 
+async function jsonResponse<T>(res: Response): Promise<T> {
+  if (!res.ok) {
+    throw new Error(`API request failed (${res.status} ${res.statusText})`);
+  }
+  return res.json() as Promise<T>;
+}
+
 export interface Profile {
   name: string;
   flight_rule: "vfr" | "ifr";
@@ -34,8 +41,9 @@ export interface RunDetail {
 export const api = {
   // Profiles
   async getProfiles(): Promise<Profile[]> {
-    const res = await fetch(`${API_BASE}/profiles`);
-    const data = await res.json();
+    const data = await jsonResponse<{ profiles: Profile[] }>(
+      await fetch(`${API_BASE}/profiles`)
+    );
     return data.profiles;
   },
 
@@ -71,8 +79,9 @@ export const api = {
 
   // Documents
   async getDocuments(): Promise<Document[]> {
-    const res = await fetch(`${API_BASE}/documents`);
-    const data = await res.json();
+    const data = await jsonResponse<{ documents: Document[] }>(
+      await fetch(`${API_BASE}/documents`)
+    );
     return data.documents;
   },
 
