@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/FreezeManny/dfs-aip-web-app/compare/frontend-v1.1.0...frontend-v1.1.1) (2026-10-10)
+
+
+### Bug Fixes
+
+* profile and docs not showing ([#39](https://github.com/FreezeManny/dfs-aip-web-app/issues/39)) ([9e2212f](https://github.com/FreezeManny/dfs-aip-web-app/commit/9e2212f49dc6531166ec88d6602bd61ef3fe5cb0))
+
 ## [1.1.0](https://github.com/FreezeManny/dfs-aip-web-app/compare/frontend-v1.0.3...frontend-v1.1.0) (2026-10-10)
 
 
