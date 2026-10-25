@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.1](https://github.com/FreezeManny/dfs-aip-web-app/compare/backend-v1.1.0...backend-v1.1.1) (2026-10-25)
+
+
+### Bug Fixes
+
+* **deps:** bump the backend group in /webui/backend with 2 updates ([#41](https://github.com/FreezeManny/dfs-aip-web-app/issues/41)) ([2b4c5ac](https://github.com/FreezeManny/dfs-aip-web-app/commit/2b4c5aca033a08b558ccff65fdf4e65c12251484))
+* **deps:** bump the backend group in /webui/backend with 2 updates ([#45](https://github.com/FreezeManny/dfs-aip-web-app/issues/45)) ([7399d04](https://github.com/FreezeManny/dfs-aip-web-app/commit/7399d041cc75f9ca88fb07544a9b09ccae4e99a1))
+
 ## [1.1.0](https://github.com/FreezeManny/dfs-aip-web-app/compare/backend-v1.0.4...backend-v1.1.0) (2026-10-10)
 
 
