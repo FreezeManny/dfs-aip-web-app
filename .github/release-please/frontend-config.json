@@ -1,6 +1,9 @@
 {
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
   "separate-pull-requests": true,
+  "label": "autorelease: pending",
+  "release-label": "autorelease: tagged",
+  "snapshot-label": "autorelease: snapshot",
   "packages": {
     "webui/frontend": {
       "release-type": "node",
