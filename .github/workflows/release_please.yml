@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - main
+  schedule:
+    # Weekly auto-release every Saturday at midnight UTC
+    - cron: "0 0 * * 6"
+  workflow_dispatch:
 
 # Two merges in quick succession would otherwise race to update the same
 # release PR; the newest wins, and an in-flight run is left to finish.
@@ -18,6 +22,7 @@ permissions:
 
 jobs:
   release-please:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       # One config and manifest per component. A shared manifest puts both
@@ -31,9 +36,27 @@ jobs:
           token: ${{ secrets.ACTIONS_TOKEN }}
           config-file: .github/release-please/backend-config.json
           manifest-file: .github/release-please/backend-manifest.json
+          skip-labeling: false
 
       - uses: googleapis/release-please-action@v5
         with:
           token: ${{ secrets.ACTIONS_TOKEN }}
           config-file: .github/release-please/frontend-config.json
           manifest-file: .github/release-please/frontend-manifest.json
+          skip-labeling: false
+
+  weekly-autorelease:
+    name: Merge pending release PRs
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Merge open autorelease PRs
+        env:
+          # Using ACTIONS_TOKEN so that merging the PR triggers the `push` to
+          # `main`, which in turn runs `release-please` to tag and publish.
+          GH_TOKEN: ${{ secrets.ACTIONS_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          for pr in $(gh pr list --repo "$REPO" --state open --label "autorelease: pending" --json number --jq '.[].number'); do
+            gh pr merge "$pr" --repo "$REPO" --squash --delete-branch
+          done

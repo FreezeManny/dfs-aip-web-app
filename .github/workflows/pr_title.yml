@@ -12,17 +12,15 @@ on:
   # introduces it. Reading the title needs no write token, so the restricted
   # `pull_request` token is enough.
   #
-  # `synchronize` is deliberately absent, since a push does not change the
-  # title. The cost: `pr-title` is a required check (see the job comment
-  # below) and required checks are validated per commit SHA, so a push leaves
-  # the new SHA with no `pr-title` run and the PR waits on "Expected — waiting
-  # for status to be reported" until the title is edited or the workflow is
-  # re-run by hand.
+  # `synchronize` is included because `pr-title` is a required check per commit
+  # SHA: when a PR is updated (or force-pushed by release-please), re-running
+  # reports the status on the new SHA without requiring manual title edits.
   pull_request:
     types:
       - opened
       - edited
       - reopened
+      - synchronize
 
 permissions:
   pull-requests: read
