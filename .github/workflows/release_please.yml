@@ -25,24 +25,15 @@ jobs:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
-      # One config and manifest per component. A shared manifest puts both
-      # versions on adjacent lines of the same file, so concurrent release PRs
-      # collide there and whichever merges second has to be rebased.
+      # One image, one component: a single config and manifest, tags are "vX.Y.Z".
       - uses: googleapis/release-please-action@v5
         with:
           # A PAT rather than GITHUB_TOKEN: releases created with the default
           # token do not emit events, so Publish — which is `on: release` —
           # would never fire.
           token: ${{ secrets.ACTIONS_TOKEN }}
-          config-file: .github/release-please/backend-config.json
-          manifest-file: .github/release-please/backend-manifest.json
-          skip-labeling: false
-
-      - uses: googleapis/release-please-action@v5
-        with:
-          token: ${{ secrets.ACTIONS_TOKEN }}
-          config-file: .github/release-please/frontend-config.json
-          manifest-file: .github/release-please/frontend-manifest.json
+          config-file: .github/release-please/config.json
+          manifest-file: .github/release-please/manifest.json
           skip-labeling: false
 
   weekly-autorelease:

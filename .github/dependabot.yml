@@ -7,7 +7,7 @@
 # a release. The rule is "does this change what users install?" —
 #   yes -> `fix`, so release-please opens a release PR with a visible entry
 #   no  -> `chore`, hidden from the changelog and never a release on its own
-# Both images are consumed as `:latest` by docker-compose.yaml, so a base image
+# The image is consumed as `:latest` by docker-compose.yaml, so a base image
 # or dependency bump is exactly the kind of thing that should get a version.
 # Stated explicitly rather than left to Dependabot's inference from commit
 # history, which now contains `fix(deps)` commits too.
@@ -16,9 +16,8 @@
 # Monday review queue of a dozen near-identical PRs. Grouped, each ecosystem
 # gives one PR that either goes green or does not.
 #
-# .github/release-please/ holds one config per component, keyed on
-# `webui/backend` and `webui/frontend`, so a bump only ever affects the
-# component whose directory it touches. vendor/ has no entry here on purpose:
+# There is a single release component (the one image), so every `fix` bump
+# below ends up in the same release PR. vendor/ has no entry here on purpose:
 # it is a verbatim copy of upstream, refreshed only by vendor/update.sh.
 version: 2
 updates:
@@ -36,8 +35,8 @@ updates:
       actions:
         patterns: ["*"]
 
-  # FastAPI and friends, installed into the published backend image.
-  - package-ecosystem: "pip"
+  # FastAPI and friends in pyproject.toml / uv.lock, installed into the image.
+  - package-ecosystem: "uv"
     directory: "/webui/backend"
     schedule:
       interval: weekly
@@ -45,13 +44,13 @@ updates:
       prefix: "fix"
       include: "scope"
     groups:
-      backend:
+      python:
         patterns: ["*"]
 
-  # The `python:3.12-slim` base image in webui/backend/Dockerfile — the OS and
-  # interpreter users actually run.
+  # The `python` runtime image and the `oven/bun` build stage in webui/Dockerfile —
+  # the OS and interpreter users actually run.
   - package-ecosystem: "docker"
-    directory: "/webui/backend"
+    directory: "/webui"
     schedule:
       interval: weekly
     commit-message:
@@ -63,7 +62,7 @@ updates:
   # image, so `fix` across the board rather than splitting by dependency-type:
   # bumping vite or typescript changes the bundle users get just as much as
   # bumping react does.
-  - package-ecosystem: "npm"
+  - package-ecosystem: "bun"
     directory: "/webui/frontend"
     schedule:
       interval: weekly
@@ -71,11 +70,11 @@ updates:
       prefix: "fix"
       include: "scope"
     groups:
-      frontend:
+      bun:
         patterns: ["*"]
     # TypeScript 7 is held back by the linter rather than by our code:
     # typescript-eslint declares `typescript: ">=4.8.4 <6.1.0"` and refuses to
-    # load against 7, so `pnpm lint` exits before reading a file and the whole
+    # load against 7, so `bun run lint` exits before reading a file and the whole
     # grouped PR goes red. Grouping makes that one incompatibility block the
     # other twenty-odd bumps, which is what happened to #10. Drop this entry
     # once typescript-eslint ships TS 7 support:
@@ -83,13 +82,3 @@ updates:
     ignore:
       - dependency-name: "typescript"
         update-types: ["version-update:semver-major"]
-
-  # The `node:22-alpine` build stage and the `nginx:alpine` runtime stage in
-  # webui/frontend/Dockerfile.
-  - package-ecosystem: "docker"
-    directory: "/webui/frontend"
-    schedule:
-      interval: weekly
-    commit-message:
-      prefix: "fix"
-      include: "scope"

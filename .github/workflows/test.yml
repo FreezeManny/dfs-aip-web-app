@@ -19,99 +19,61 @@ concurrency:
 permissions:
   contents: read
 
-# One job per release-please package. Both run on every PR, deliberately
-# unfiltered by path: the two halves share an HTTP contract, so a change to the
-# backend can break the frontend and vice versa. Path filters would also make
-# either job unusable as a required check — a required check that is filtered
-# out never reports, and the PR waits on it forever.
 jobs:
-  # Named `backend` because the branch ruleset on main requires that check by
-  # name; renaming the job silently un-gates the branch.
-  backend:
-    name: backend
+  test:
+    name: test
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up Python
-        uses: actions/setup-python@v7
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
         with:
-          # Same version as the base image in webui/backend/Dockerfile.
-          python-version: "3.12"
+          python-version: "3.14"
+          enable-cache: true
+          cache-dependency-glob: "webui/backend/uv.lock"
 
-      # The image build below installs the dependencies but never imports the
-      # app, so a syntax error in main.py would otherwise only surface when the
-      # container starts. vendor/ is excluded on purpose: it is a verbatim copy
-      # of upstream, refreshed only by vendor/update.sh.
+      - name: Install Python dependencies
+        working-directory: webui/backend
+        run: uv sync --frozen
+
       - name: Byte-compile
-        run: python -m compileall -q webui/backend
+        working-directory: webui/backend
+        run: uv run python -m compileall -q .
+
+      - name: Unit tests
+        working-directory: webui/backend
+        run: uv run pytest tests -q
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install JS dependencies
+        working-directory: webui/frontend
+        run: bun install --frozen-lockfile
+
+      - name: Lint
+        working-directory: webui/frontend
+        run: bun run lint
+
+      - name: Build
+        working-directory: webui/frontend
+        run: bun run build
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      # Build the image that ships, without pushing it: this is what catches a
-      # bad requirements.txt bump or a broken apt package. Same cache scope as
-      # docker-publish.yml, so the release build reuses the layers this PR
-      # already paid for.
-      - name: Build backend image
+      # Build the single image that ships, without pushing it: this catches a
+      # bad uv.lock/package bump, a broken apt package or a build failure
+      # inside the image. Same cache scope as docker-publish.yml.
+      - name: Build image
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: webui/backend/Dockerfile
+          file: webui/Dockerfile
           push: false
-          cache-from: type=gha,scope=backend
-          cache-to: type=gha,mode=max,scope=backend
-
-  # Named `frontend` because the branch ruleset on main requires that check by
-  # name; renaming the job silently un-gates the branch.
-  frontend:
-    name: frontend
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Set up Node
-        uses: actions/setup-node@v7
-        with:
-          # Same version as the build stage in webui/frontend/Dockerfile.
-          node-version: "22"
-
-      # The pnpm version comes from the `packageManager` field in
-      # package.json, so this job, the Dockerfile and a local checkout all run
-      # the same one. Unpinned, corepack resolves "latest" per invocation, and
-      # a cached install layer written by an older pnpm makes the next
-      # `pnpm build` abort trying to re-install over it.
-      - name: Enable pnpm
-        run: corepack enable pnpm
-
-      - name: Install
-        working-directory: webui/frontend
-        run: pnpm install --frozen-lockfile
-
-      # The image build runs `pnpm build` but not the linter, so this is the
-      # only place eslint runs at all.
-      - name: Lint
-        working-directory: webui/frontend
-        run: pnpm lint
-
-      # `pnpm build` is `tsc -b && vite build`, so this type-checks too.
-      - name: Build
-        working-directory: webui/frontend
-        run: pnpm build
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      # nginx.conf and the nginx base image only exist in the image, so the
-      # pnpm build above does not cover them. Same cache scope as
-      # docker-publish.yml.
-      - name: Build frontend image
-        uses: docker/build-push-action@v7
-        with:
-          context: webui/frontend
-          file: webui/frontend/Dockerfile
-          push: false
-          cache-from: type=gha,scope=frontend
-          cache-to: type=gha,mode=max,scope=frontend
+          cache-from: type=gha,scope=app
+          cache-to: type=gha,mode=max,scope=app

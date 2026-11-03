@@ -11,4 +11,10 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  // In production the backend serves both the UI and /api; in dev, forward /api to it.
+  server: {
+    proxy: {
+      "/api": "http://localhost:8000",
+    },
+  },
 })

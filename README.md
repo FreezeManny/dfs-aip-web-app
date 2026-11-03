@@ -5,11 +5,12 @@ downloads and print-prepares the German DFS Aeronautical Information Publication
 VFR) as PDFs.
 
 The UI lets you manage download profiles, schedule nightly updates, trigger updates manually,
-browse run history, and download the generated (OCR'd) PDFs — all from the browser.
+browse run history, and download the generated (OCR'd) PDFs (or ZIP archives for mobile devices) —
+all from a single container.
 
 ## Quick start
 
-Run the published images from the GitHub Container Registry — no build needed:
+Run the published image from the GitHub Container Registry — no build needed:
 
 ```sh
 docker compose up -d
@@ -17,29 +18,25 @@ docker compose up -d
 ```
 
 This uses the [`docker-compose.yaml`](docker-compose.yaml) in the project root, which pulls
-`ghcr.io/freezemanny/dfs-aip-frontend` and `ghcr.io/freezemanny/dfs-aip-backend`:
+`ghcr.io/freezemanny/dfs-aip`:
 
 ```yaml
 services:
-  frontend:
-    image: ghcr.io/freezemanny/dfs-aip-frontend:latest
-    container_name: dfs-aip-frontend
+  dfs-aip:
+    image: ghcr.io/freezemanny/dfs-aip:latest
+    container_name: dfs-aip
     ports:
-      - "8080:80"
-    depends_on:
-      - backend
-    restart: unless-stopped
-
-  backend:
-    image: ghcr.io/freezemanny/dfs-aip-backend:latest
-    container_name: dfs-aip-backend
+      - "8080:8000"
     environment:
       # Auto-update configuration
       - AUTO_UPDATE_ENABLED=true
       - AUTO_UPDATE_HOUR=2    # 2 AM (24-hour format)
       - AUTO_UPDATE_MINUTE=0  # 00 minutes
+      # Rollover (defaults shown)
+      # - RETAIN_CYCLES=2          # newest AIRAC cycles kept per profile
+      # - RUN_RETENTION_DAYS=180   # how long run history is kept
     volumes:
-      - data:/app/data      # Profiles JSON
+      - data:/app/data      # SQLite database (profiles, run history)
       - output:/app/output  # Generated PDFs
       - aip-cache:/app/cache  # Cache
     restart: unless-stopped
@@ -50,7 +47,11 @@ volumes:
   aip-cache:
 ```
 
-To build the images locally from source instead:
+> **Upgrading from the two-container setup (`dfs-aip-frontend` + `dfs-aip-backend`):**
+> Replace both services in your `docker-compose.yaml` with the single `dfs-aip` service above.
+> Existing `profiles.json` and `runs/*.json` files in the `data` volume are imported into SQLite automatically on first start (and renamed to `*.migrated`).
+
+To build the image locally from source instead:
 
 ```sh
 docker compose -f webui/docker-compose.yaml up --build -d
@@ -66,7 +67,8 @@ vendor/          Vendored, unmodified copy of the upstream DFS AIP tool
   README.md        pinned upstream version + how to update
   update.sh        re-sync script
 webui/           The web interface (this project's own code)
-  backend/         FastAPI backend that drives the tool
+  Dockerfile       Multi-stage build (Vite static SPA + FastAPI runtime)
+  backend/         FastAPI backend (uv) that drives the tool and serves the SPA
   frontend/        React + TypeScript + Vite + Tailwind UI
   docker-compose.yaml
 ```
@@ -95,17 +97,12 @@ fix(backend): handle empty profile list
 chore(deps): bump vite
 ```
 
-> Only `feat`, `fix`, and breaking changes bump a version; the rest don't trigger a release. The
-> scope decides *which* component gets released — release-please assigns a change to `backend` or
-> `frontend` by the paths it touches, and each gets its own version, changelog, tag and image tag.
->
+> Only `feat`, `fix`, and breaking changes bump a version; the rest don't trigger a release.
 > A PR that does two unrelated things collapses into one changelog entry under one type. The fix
 > is to split the PR.
 
-The other checks on a PR: **backend** (byte-compile + build the backend image) and **frontend**
-(eslint, `tsc`, Vite build + build the frontend image). Both build the images that actually ship,
-without pushing them, so a bad dependency or base-image bump fails here rather than at release
-time.
+The other checks on a PR: **backend** (byte-compile, pytest, and build the combined Docker image)
+and **frontend** (eslint, `tsc`, Vite build).
 
 ## Attribution & license
 

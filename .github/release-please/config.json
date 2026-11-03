@@ -1,0 +1,25 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "label": "autorelease: pending",
+  "release-label": "autorelease: tagged",
+  "snapshot-label": "autorelease: snapshot",
+  "include-component-in-tag": false,
+  "packages": {
+    ".": {
+      "release-type": "simple",
+      "package-name": "dfs-aip",
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "webui/backend/pyproject.toml",
+          "jsonpath": "$.project.version"
+        },
+        {
+          "type": "json",
+          "path": "webui/frontend/package.json",
+          "jsonpath": "$.version"
+        }
+      ]
+    }
+  }
+}

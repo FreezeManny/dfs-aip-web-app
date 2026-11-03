@@ -15,10 +15,10 @@ env:
   OWNER: ${{ github.repository_owner }}
 
 jobs:
-  build-backend:
-    name: Build and push backend
-    # Release Please tags backend releases as "backend-vX.Y.Z".
-    if: startsWith(github.event.release.tag_name, 'backend-v')
+  build:
+    name: Build and push image
+    # Release Please tags releases as "vX.Y.Z".
+    if: startsWith(github.event.release.tag_name, 'v')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -40,15 +40,15 @@ jobs:
       - name: Derive version from tag
         id: version
         run: |
-          VERSION="${GITHUB_REF_NAME#backend-v}"
+          VERSION="${GITHUB_REF_NAME#v}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "major_minor=${VERSION%.*}" >> "$GITHUB_OUTPUT"
 
-      - name: Extract metadata for backend
-        id: meta-backend
+      - name: Extract metadata
+        id: meta
         uses: docker/metadata-action@v6
         with:
-          images: ${{ env.REGISTRY }}/${{ env.OWNER }}/dfs-aip-backend
+          images: ${{ env.REGISTRY }}/${{ env.OWNER }}/dfs-aip
           tags: |
             type=raw,value=${{ steps.version.outputs.version }}
             type=raw,value=${{ steps.version.outputs.major_minor }}
@@ -58,81 +58,16 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      - name: Build and push backend image
+      - name: Build and push image
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: webui/backend/Dockerfile
+          file: webui/Dockerfile
           push: true
-          tags: ${{ steps.meta-backend.outputs.tags }}
-          labels: ${{ steps.meta-backend.outputs.labels }}
-          cache-from: type=gha,scope=backend
-          cache-to: type=gha,mode=max,scope=backend
-
-      - name: Label release PR as published
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SHA: ${{ github.sha }}
-          REPO: ${{ github.repository }}
-        run: |
-          gh label create "autorelease: published" --color "ededed" --force --repo "$REPO"
-          for pr in $(gh api "repos/$REPO/commits/$SHA/pulls" --jq '.[].number'); do
-            gh pr edit "$pr" --repo "$REPO" --remove-label "autorelease: tagged" --add-label "autorelease: published"
-          done
-
-  build-frontend:
-    name: Build and push frontend
-    # Release Please tags frontend releases as "frontend-vX.Y.Z".
-    if: startsWith(github.event.release.tag_name, 'frontend-v')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-      issues: write
-      pull-requests: write
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v4
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Derive version from tag
-        id: version
-        run: |
-          VERSION="${GITHUB_REF_NAME#frontend-v}"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "major_minor=${VERSION%.*}" >> "$GITHUB_OUTPUT"
-
-      - name: Extract metadata for frontend
-        id: meta-frontend
-        uses: docker/metadata-action@v6
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.OWNER }}/dfs-aip-frontend
-          tags: |
-            type=raw,value=${{ steps.version.outputs.version }}
-            type=raw,value=${{ steps.version.outputs.major_minor }}
-            type=raw,value=latest
-            type=sha,prefix=sha-
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Build and push frontend image
-        uses: docker/build-push-action@v7
-        with:
-          context: webui/frontend
-          file: webui/frontend/Dockerfile
-          push: true
-          tags: ${{ steps.meta-frontend.outputs.tags }}
-          labels: ${{ steps.meta-frontend.outputs.labels }}
-          cache-from: type=gha,scope=frontend
-          cache-to: type=gha,mode=max,scope=frontend
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=app
+          cache-to: type=gha,mode=max,scope=app
 
       - name: Label release PR as published
         env:
