@@ -165,21 +165,28 @@ export function ProfilesSection({ profiles, onProfilesChange }: ProfilesSectionP
                         {p.enabled ? "Enabled" : "Disabled"}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-right space-x-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => setSelectedProfile(p)}
-                        title="View Profile JSON"
-                      >
-                        <FileJson className="h-4 w-4" />
-                      </Button>
-                      <Button size="sm" variant="outline" onClick={() => handleToggleProfile(p)}>
-                        {p.enabled ? "Disable" : "Enable"}
-                      </Button>
-                      <Button size="sm" variant="destructive" onClick={() => handleDeleteProfile(p.name)}>
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                    <TableCell className="text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setSelectedProfile(p)}
+                          title="View Profile JSON"
+                        >
+                          <FileJson className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="w-20"
+                          onClick={() => handleToggleProfile(p)}
+                        >
+                          {p.enabled ? "Disable" : "Enable"}
+                        </Button>
+                        <Button size="sm" variant="destructive" onClick={() => handleDeleteProfile(p.name)}>
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
