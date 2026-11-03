@@ -1,11 +1,19 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { flexRender, useTable } from "@tanstack/react-table";
-import { features, type Features } from "@/lib/table";
+import { features, getPaginationItems, type Features } from "@/lib/table";
 import { api, type RunSummary, type RunDetail } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -23,11 +31,13 @@ import {
 import {
   Pagination,
   PaginationContent,
+  PaginationEllipsis,
   PaginationItem,
+  PaginationLink,
   PaginationNext,
   PaginationPrevious,
 } from "@/components/ui/pagination";
-import { CheckCircle, AlertCircle } from "lucide-react";
+import { CheckCircle, AlertCircle, Loader2, X } from "lucide-react";
 
 interface RunHistoryTableProps {
   refreshTrigger?: number;
@@ -36,34 +46,13 @@ interface RunHistoryTableProps {
 export function RunHistoryTable({ refreshTrigger = 0 }: RunHistoryTableProps) {
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [selectedRunDetail, setSelectedRunDetail] = useState<RunDetail | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-
-  // Declared before the effect that calls it: as a `const` further down it was
-  // only reachable because effects run after render, and the effect could not
-  // list it as a dependency. useCallback keeps the identity stable so naming it
-  // as one does not re-fetch on every render.
-  const loadRuns = useCallback(async () => {
-    setIsLoading(true);
-    try {
-      const runsData = await api.getRuns();
-      setRuns(runsData);
-    } catch (e) {
-      console.error("Failed to load runs:", e);
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
 
   useEffect(() => {
-    // `loadRuns` flips `isLoading` synchronously, which is exactly what
-    // set-state-in-effect warns about. Here the extra render pass is the point:
-    // it is what puts the button into its "Refreshing..." state while a parent
-    // bumps `refreshTrigger` after a run finishes. Suppressed rather than
-    // restructured because the alternatives either drop that feedback or move
-    // the flag to the call sites, which the trigger path has none of.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    loadRuns();
-  }, [refreshTrigger, loadRuns]);
+    api
+      .getRuns()
+      .then(setRuns)
+      .catch((e) => console.error("Failed to load runs:", e));
+  }, [refreshTrigger]);
 
   const viewRunDetail = async (runId: string) => {
     try {
@@ -78,6 +67,12 @@ export function RunHistoryTable({ refreshTrigger = 0 }: RunHistoryTableProps) {
     {
       accessorKey: "timestamp",
       header: "Time",
+      filterFn: (row, columnId, filterValue) => {
+        const raw = String(row.getValue(columnId) ?? "");
+        const formatted = new Date(raw).toLocaleString();
+        const needle = String(filterValue ?? "").toLowerCase();
+        return raw.toLowerCase().includes(needle) || formatted.toLowerCase().includes(needle);
+      },
       cell: ({ row }) => {
         const isoString = row.getValue("timestamp") as string;
         return new Date(isoString).toLocaleString();
@@ -86,11 +81,17 @@ export function RunHistoryTable({ refreshTrigger = 0 }: RunHistoryTableProps) {
     {
       accessorKey: "status",
       header: "Status",
+      filterFn: "equalsString",
       cell: ({ row }) => {
-        const status = row.getValue("status") as "success" | "error";
+        const status = row.getValue("status") as RunSummary["status"];
         return (
           <div className="flex items-center gap-2">
-            {status === "success" ? (
+            {status === "running" ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
+                <span className="text-blue-600 font-medium">Running</span>
+              </>
+            ) : status === "success" ? (
               <>
                 <CheckCircle className="h-4 w-4 text-green-600" />
                 <span className="text-green-600 font-medium">Success</span>
@@ -108,6 +109,10 @@ export function RunHistoryTable({ refreshTrigger = 0 }: RunHistoryTableProps) {
     {
       accessorKey: "pdf_created",
       header: "New PDFs",
+      filterFn: (row, columnId, filterValue) => {
+        const created = Boolean(row.getValue(columnId));
+        return filterValue === "yes" ? created : !created;
+      },
       cell: ({ row }) => {
         const pdfCreated = row.getValue("pdf_created") as boolean;
         return pdfCreated ? (
@@ -115,15 +120,18 @@ export function RunHistoryTable({ refreshTrigger = 0 }: RunHistoryTableProps) {
             New PDF
           </Badge>
         ) : (
-          <Badge variant="secondary" className="text-muted-foreground">
-            Existing
-          </Badge>
+          <span className="text-muted-foreground text-sm">No changes</span>
         );
       },
     },
     {
       accessorKey: "profiles",
       header: "Profiles",
+      filterFn: (row, columnId, filterValue) => {
+        const profiles = (row.getValue(columnId) as string[]) ?? [];
+        const needle = String(filterValue ?? "").toLowerCase();
+        return profiles.some((p) => p.toLowerCase().includes(needle));
+      },
       cell: ({ row }) => {
         const profiles = row.getValue("profiles") as string[];
         return (
@@ -131,7 +139,7 @@ export function RunHistoryTable({ refreshTrigger = 0 }: RunHistoryTableProps) {
             {profiles.map((profile) => (
               <span
                 key={profile}
-                className="inline-block px-2 py-1 bg-muted text-xs rounded"
+                className="bg-secondary text-secondary-foreground px-2 py-0.5 rounded text-xs"
               >
                 {profile}
               </span>
@@ -142,6 +150,7 @@ export function RunHistoryTable({ refreshTrigger = 0 }: RunHistoryTableProps) {
     },
     {
       id: "actions",
+      enableColumnFilter: false,
       cell: ({ row }) => (
         <Button
           onClick={() => viewRunDetail(row.original.id)}
@@ -166,16 +175,13 @@ export function RunHistoryTable({ refreshTrigger = 0 }: RunHistoryTableProps) {
     },
   });
 
+  const hasActiveFilters = table.state.columnFilters.length > 0;
+
   return (
     <>
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center justify-between">
-            <span>Run History</span>
-            <Button onClick={loadRuns} disabled={isLoading} variant="outline" size="sm">
-              {isLoading ? "Refreshing..." : "Refresh"}
-            </Button>
-          </CardTitle>
+          <CardTitle>Run History</CardTitle>
         </CardHeader>
         <CardContent>
           {runs.length === 0 ? (
@@ -200,6 +206,95 @@ export function RunHistoryTable({ refreshTrigger = 0 }: RunHistoryTableProps) {
                       })}
                     </TableRow>
                   ))}
+                  <TableRow className="bg-muted/30 hover:bg-muted/30">
+                    {table.getHeaderGroups()[0]?.headers.map((header) => {
+                      const column = header.column;
+                      if (column.id === "actions") {
+                        return (
+                          <TableHead key={header.id} className="py-1.5 text-right">
+                            {hasActiveFilters && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 px-2 text-xs"
+                                onClick={() => {
+                                  table.resetColumnFilters();
+                                  table.setPageIndex(0);
+                                }}
+                              >
+                                <X className="mr-1 h-3 w-3" /> Clear
+                              </Button>
+                            )}
+                          </TableHead>
+                        );
+                      }
+                      if (!column.getCanFilter()) {
+                        return <TableHead key={header.id} className="py-1.5" />;
+                      }
+                      if (column.id === "status") {
+                        return (
+                          <TableHead key={header.id} className="py-1.5">
+                            <Select
+                              value={(column.getFilterValue() as string) ?? "all"}
+                              onValueChange={(val) => {
+                                column.setFilterValue(val === "all" ? undefined : val);
+                                table.setPageIndex(0);
+                              }}
+                            >
+                              <SelectTrigger className="h-7 text-xs">
+                                <SelectValue placeholder="All" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="all">All</SelectItem>
+                                <SelectItem value="success">Success</SelectItem>
+                                <SelectItem value="error">Error</SelectItem>
+                                <SelectItem value="running">Running</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </TableHead>
+                        );
+                      }
+                      if (column.id === "pdf_created") {
+                        return (
+                          <TableHead key={header.id} className="py-1.5">
+                            <Select
+                              value={(column.getFilterValue() as string) ?? "all"}
+                              onValueChange={(val) => {
+                                column.setFilterValue(val === "all" ? undefined : val);
+                                table.setPageIndex(0);
+                              }}
+                            >
+                              <SelectTrigger className="h-7 text-xs">
+                                <SelectValue placeholder="All" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="all">All</SelectItem>
+                                <SelectItem value="yes">New PDF</SelectItem>
+                                <SelectItem value="no">No changes</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </TableHead>
+                        );
+                      }
+                      const placeholders: Record<string, string> = {
+                        timestamp: "Filter time...",
+                        profiles: "Filter profile...",
+                      };
+                      return (
+                        <TableHead key={header.id} className="py-1.5">
+                          <Input
+                            placeholder={placeholders[column.id] ?? "Filter..."}
+                            value={(column.getFilterValue() as string) ?? ""}
+                            onChange={(e) => {
+                              column.setFilterValue(e.target.value || undefined);
+                              table.setPageIndex(0);
+                            }}
+                            className="h-7 text-xs"
+                          />
+                        </TableHead>
+                      );
+                    })}
+                  </TableRow>
                 </TableHeader>
                 <TableBody>
                   {table.getRowModel().rows?.length ? (
@@ -221,7 +316,7 @@ export function RunHistoryTable({ refreshTrigger = 0 }: RunHistoryTableProps) {
                         colSpan={columns.length}
                         className="h-24 text-center text-muted-foreground"
                       >
-                        No runs yet
+                        No matching runs
                       </TableCell>
                     </TableRow>
                   )}
@@ -229,7 +324,7 @@ export function RunHistoryTable({ refreshTrigger = 0 }: RunHistoryTableProps) {
               </Table>
             </div>
           )}
-          {runs.length > 10 && (
+          {table.getPageCount() > 1 && (
             <div className="flex items-center justify-between pt-4">
               <div className="text-sm text-muted-foreground">
                 Page {table.state.pagination.pageIndex + 1} of{" "}
@@ -247,6 +342,30 @@ export function RunHistoryTable({ refreshTrigger = 0 }: RunHistoryTableProps) {
                       className={!table.getCanPreviousPage() ? "pointer-events-none opacity-50" : "cursor-pointer"}
                     />
                   </PaginationItem>
+                  {getPaginationItems(
+                    table.state.pagination.pageIndex,
+                    table.getPageCount()
+                  ).map((item, idx) =>
+                    item === "ellipsis" ? (
+                      <PaginationItem key={`ellipsis-${idx}`}>
+                        <PaginationEllipsis />
+                      </PaginationItem>
+                    ) : (
+                      <PaginationItem key={item}>
+                        <PaginationLink
+                          href="#"
+                          isActive={item === table.state.pagination.pageIndex}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            table.setPageIndex(item);
+                          }}
+                          className="cursor-pointer"
+                        >
+                          {item + 1}
+                        </PaginationLink>
+                      </PaginationItem>
+                    )
+                  )}
                   <PaginationItem>
                     <PaginationNext
                       href="#"
