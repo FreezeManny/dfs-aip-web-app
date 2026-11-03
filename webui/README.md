@@ -50,12 +50,11 @@ cd webui/backend
 uv run pytest tests
 ```
 
-**Frontend (`pnpm`):**
+**Frontend (`bun`):**
 ```bash
 cd webui/frontend
-corepack enable pnpm
-pnpm install
-pnpm dev
+bun install
+bun run dev
 # Runs on http://localhost:5173 (proxies /api to http://localhost:8000)
 ```
 

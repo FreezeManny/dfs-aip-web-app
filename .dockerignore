@@ -1,0 +1,10 @@
+.git
+.github
+**/node_modules
+webui/frontend/dist
+**/__pycache__
+**/*.pyc
+**/.venv
+**/.pytest_cache
+webui/backend/tests
+volumes
