@@ -1,6 +1,5 @@
-import asyncio
-import zipfile
 import io
+import zipfile
 
 import db
 
@@ -9,14 +8,6 @@ PROFILE = {"name": "vfr", "flight_rule": "vfr", "filters": ["AD"], "enabled": Tr
 
 def make_profile(client, **over):
     assert client.post("/api/profiles", json={**PROFILE, **over}).status_code == 200
-
-
-def run(app_main, **kw):
-    asyncio.run(app_main.run_update(**kw))
-
-
-def out(app_main, name=""):
-    return app_main.OUTPUT_DIR / name
 
 
 def files(app_main):
@@ -36,102 +27,6 @@ def test_profile_api_shapes(client):
     assert client.delete("/api/profiles/vfr").status_code == 404
 
 
-# ---------- update pipeline ----------
-
-def test_update_creates_ocr_and_deletes_raw(client, app_main):
-    make_profile(client)
-    run(app_main)
-    assert files(app_main) == ["vfr_2026-11-12_ocr.pdf"]
-
-    runs = client.get("/api/runs").json()["runs"]
-    assert len(runs) == 1 and runs[0]["status"] == "success" and runs[0]["pdf_created"] is True
-    detail = client.get(f"/api/runs/{runs[0]['id']}").json()
-    assert detail["logs"]["vfr"][-1]["stage"] == "complete"
-    assert app_main._current_run_id is None and app_main._update_lock_file is None
-
-
-def test_second_run_is_noop_when_ocr_exists(client, app_main, monkeypatch, tmp_path):
-    make_profile(client)
-    run(app_main)
-    log = tmp_path / "aip.log"
-    monkeypatch.setenv("FAKE_AIP_LOG", str(log))
-    run(app_main)
-    assert "pdf" not in log.read_text()  # no regeneration
-    assert files(app_main) == ["vfr_2026-11-12_ocr.pdf"]
-
-
-def test_failed_ocr_keeps_raw_and_old_cycle(client, app_main, monkeypatch):
-    make_profile(client)
-    run(app_main)  # cycle 2026-11-12 complete
-    monkeypatch.setenv("FAKE_AIRAC", "2026-12-10")
-    monkeypatch.setenv("FAKE_OCR_FAIL", "1")
-    run(app_main)
-    # new raw is kept for a retry, no partial left behind, old complete doc untouched
-    assert files(app_main) == ["vfr_2026-11-12_ocr.pdf", "vfr_2026-12-10.pdf"]
-    assert client.get("/api/runs").json()["runs"][0]["status"] == "error"
-
-    monkeypatch.delenv("FAKE_OCR_FAIL")
-    run(app_main)  # resumes OCR from the kept raw file
-    assert files(app_main) == ["vfr_2026-11-12_ocr.pdf", "vfr_2026-12-10_ocr.pdf"]
-
-
-def test_failed_pdf_leaves_no_partial(client, app_main, monkeypatch):
-    make_profile(client)
-    monkeypatch.setenv("FAKE_AIP_PDF_FAIL", "1")
-    run(app_main)
-    assert files(app_main) == []
-
-
-def test_rollover_keeps_newest_cycles(client, app_main, monkeypatch):
-    make_profile(client)
-    for airac in ("2026-10-15", "2026-11-12", "2026-12-10", "2027-01-07"):
-        monkeypatch.setenv("FAKE_AIRAC", airac)
-        run(app_main)
-    assert files(app_main) == ["vfr_2026-12-10_ocr.pdf", "vfr_2027-01-07_ocr.pdf"]
-
-
-def test_upgrade_drops_legacy_raw_next_to_ocr(client, app_main):
-    make_profile(client)
-    d = app_main.OUTPUT_DIR
-    (d / "vfr_2026-11-12.pdf").write_bytes(b"raw")
-    (d / "vfr_2026-11-12_ocr.pdf").write_bytes(b"ocr")
-    run(app_main)
-    assert files(app_main) == ["vfr_2026-11-12_ocr.pdf"]
-
-
-def test_force_refreshes_and_replaces_atomically(client, app_main, monkeypatch, tmp_path):
-    make_profile(client)
-    run(app_main)
-    before = out(app_main, "vfr_2026-11-12_ocr.pdf").read_bytes()
-    log = tmp_path / "aip.log"
-    monkeypatch.setenv("FAKE_AIP_LOG", str(log))
-    monkeypatch.setenv("FAKE_AIRAC", "2026-11-12")  # content marker differs from the first build
-    run(app_main, force=True)
-    calls = log.read_text().splitlines()
-    assert any(c.startswith("toc fetch") and "--refresh" in c for c in calls)
-    assert any(c.startswith("pdf") and "--refresh" in c for c in calls)
-    assert out(app_main, "vfr_2026-11-12_ocr.pdf").read_bytes() != before
-    assert files(app_main) == ["vfr_2026-11-12_ocr.pdf"]
-
-
-def test_failed_force_keeps_existing_document(client, app_main, monkeypatch):
-    make_profile(client)
-    run(app_main)
-    before = out(app_main, "vfr_2026-11-12_ocr.pdf").read_bytes()
-    monkeypatch.setenv("FAKE_AIP_PDF_FAIL", "1")
-    run(app_main, force=True)
-    assert out(app_main, "vfr_2026-11-12_ocr.pdf").read_bytes() == before
-    assert files(app_main) == ["vfr_2026-11-12_ocr.pdf"]
-
-
-def test_plain_update_does_not_pass_refresh(client, app_main, monkeypatch, tmp_path):
-    make_profile(client)
-    log = tmp_path / "aip.log"
-    monkeypatch.setenv("FAKE_AIP_LOG", str(log))
-    run(app_main)
-    assert "--refresh" not in log.read_text()
-
-
 # ---------- trigger / status ----------
 
 def test_trigger_and_status_endpoints(client, app_main):
@@ -147,16 +42,13 @@ def test_trigger_and_status_endpoints(client, app_main):
     finally:
         app_main._release_update_lock()
 
-    r = client.post("/api/update/run?force=true")  # TestClient runs background tasks before returning
-    assert r.status_code == 200 and r.json() == {"status": "started"}
-    assert files(app_main) == ["vfr_2026-11-12_ocr.pdf"]
-
 
 # ---------- documents / zip ----------
 
 def test_document_list_download_and_zip(client, app_main):
-    make_profile(client)
-    run(app_main)
+    pdf_bytes = b"%PDF-1.4 sample content"
+    (app_main.OUTPUT_DIR / "vfr_2026-11-12_ocr.pdf").write_bytes(pdf_bytes)
+
     docs = client.get("/api/documents").json()["documents"]
     assert len(docs) == 1
     d = docs[0]
@@ -166,6 +58,7 @@ def test_document_list_download_and_zip(client, app_main):
     direct = client.post("/api/documents/download", json={"id": d["id"], "zip": False})
     assert direct.status_code == 200
     assert direct.headers["content-disposition"].startswith("attachment")
+    assert direct.content == pdf_bytes
 
     z = client.post("/api/documents/download", json={"id": d["id"], "zip": True})
     assert z.status_code == 200

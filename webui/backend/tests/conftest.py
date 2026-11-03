@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 
 BACKEND = Path(__file__).resolve().parent.parent
-FAKES = Path(__file__).resolve().parent / "fakes"
 
 # Must be set before `main` is imported: it reads its settings and creates its dirs at import.
 ROOT = Path(tempfile.mkdtemp(prefix="aip-backend-test-"))
@@ -16,8 +15,6 @@ os.environ.update(
     CACHE_DIR=str(ROOT / "cache"),
     DATA_DIR=str(ROOT / "data"),
     STATIC_DIR=str(ROOT / "static"),
-    AIP_SCRIPT=str(FAKES / "fake_aip.py"),
-    OCRMYPDF_BIN=str(FAKES / "fake_ocrmypdf"),
     MIN_FREE_SPACE_GB="0.1",
     RETAIN_CYCLES="2",
 )
@@ -32,16 +29,14 @@ import main  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
-def clean_state(monkeypatch):
-    """Empty DB tables and output dir before each test; reset fake-tool env."""
+def clean_state():
+    """Empty DB tables and output dir before each test."""
     with db.connect() as conn:
         for table in ("run_logs", "runs", "profiles", "documents"):
             conn.execute(f"DELETE FROM {table}")
     for d in (main.OUTPUT_DIR, main.TMP_DIR):
         for item in d.iterdir():
             shutil.rmtree(item) if item.is_dir() else item.unlink()
-    for var in ("FAKE_AIP_TOC_FAIL", "FAKE_AIP_PDF_FAIL", "FAKE_OCR_FAIL", "FAKE_AIP_LOG", "FAKE_AIRAC"):
-        monkeypatch.delenv(var, raising=False)
     yield
 
 

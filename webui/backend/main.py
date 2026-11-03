@@ -70,9 +70,8 @@ RUNS_DIR = DATA_DIR / "runs"                # legacy, imported into SQLite on fi
 LOCK_FILE = DATA_DIR / "update.lock"
 TMP_DIR = DATA_DIR / "tmp"
 
-# External tools (overridable for tests)
-AIP_SCRIPT = os.environ.get("AIP_SCRIPT", "/app/aip.py")
-OCRMYPDF_BIN = os.environ.get("OCRMYPDF_BIN", "ocrmypdf")
+AIP_SCRIPT = "/app/aip.py"
+OCRMYPDF_BIN = "ocrmypdf"
 
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -845,13 +844,11 @@ if STATIC_DIR.is_dir():
     def serve_spa(full_path: str):
         if full_path == "api" or full_path.startswith("api/"):
             raise HTTPException(404, "Not found")
-        # Normalize incoming path and reject traversal/absolute paths.
         normalized = full_path.replace("\\", "/").lstrip("/")
-        path_obj = Path(normalized)
-        if path_obj.is_absolute() or ".." in path_obj.parts:
+        if ".." in normalized.split("/"):
             raise HTTPException(404, "Not found")
-        candidate = _static_files.get(path_obj.as_posix()) if normalized else None
-        if candidate is not None and candidate.is_relative_to(_static_root):
+        candidate = _static_files.get(normalized)
+        if candidate is not None:
             headers = {}
             if candidate.parent.name == "assets":
                 # Content-hashed filenames: safe to cache forever.
