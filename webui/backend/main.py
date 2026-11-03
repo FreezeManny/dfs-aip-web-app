@@ -835,13 +835,23 @@ STATIC_DIR = Path(os.environ.get("STATIC_DIR", "static"))
 
 if STATIC_DIR.is_dir():
     _static_root = STATIC_DIR.resolve()
+    _static_files: dict[str, Path] = {
+        p.relative_to(_static_root).as_posix(): p
+        for p in _static_root.rglob("*")
+        if p.is_file()
+    }
 
     @app.get("/{full_path:path}", include_in_schema=False)
     def serve_spa(full_path: str):
         if full_path == "api" or full_path.startswith("api/"):
             raise HTTPException(404, "Not found")
-        candidate = (_static_root / full_path).resolve()
-        if full_path and candidate.is_relative_to(_static_root) and candidate.is_file():
+        # Normalize incoming path and reject traversal/absolute paths.
+        normalized = full_path.replace("\\", "/").lstrip("/")
+        path_obj = Path(normalized)
+        if path_obj.is_absolute() or ".." in path_obj.parts:
+            raise HTTPException(404, "Not found")
+        candidate = _static_files.get(path_obj.as_posix()) if normalized else None
+        if candidate is not None and candidate.is_relative_to(_static_root):
             headers = {}
             if candidate.parent.name == "assets":
                 # Content-hashed filenames: safe to cache forever.

@@ -202,6 +202,8 @@ def test_spa_serving(client):
     miss = client.get("/api/nope")
     assert miss.status_code == 404 and miss.headers["content-type"].startswith("application/json")
     assert "spa" not in miss.text
+    assert client.get("/..%2Fdata/app.db").status_code == 404
+    assert client.get("/..%5Cdata%5Capp.db").status_code == 404
 
 
 def test_gzip_for_json_but_not_documents(client, app_main):
