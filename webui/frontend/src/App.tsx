@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import type { Profile, Document } from "@/lib/api";
 import { ProfilesSection } from "@/components/ProfilesSection";
@@ -13,6 +13,9 @@ import { Moon, Sun } from "lucide-react";
 function AppContent() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [documents, setDocuments] = useState<Document[]>([]);
+  const [running, setRunning] = useState(false);
+  const [runsRefresh, setRunsRefresh] = useState(0);
+  const wasRunning = useRef(false);
   const { theme, toggleTheme } = useTheme();
 
   const loadProfiles = async () => {
@@ -22,6 +25,41 @@ function AppContent() {
   const loadDocuments = async () => {
     setDocuments(await api.getDocuments());
   };
+
+  const loadDocumentsQuietly = useCallback(() => {
+    api.getDocuments().then(setDocuments).catch((error) => console.error("Failed to load documents:", error));
+  }, []);
+
+  const pollStatus = useCallback(async () => {
+    try {
+      const status = await api.getUpdateStatus();
+      setRunning(status.running);
+      if (wasRunning.current && !status.running) {
+        // The update just finished: show the new documents and the finished run without a manual refresh.
+        loadDocumentsQuietly();
+        setRunsRefresh((n) => n + 1);
+      }
+      wasRunning.current = status.running;
+    } catch (error) {
+      console.error("Failed to load update status:", error);
+    }
+  }, [loadDocumentsQuietly]);
+
+  // Poll quickly while an update is running, slowly otherwise (picks up scheduled runs and other tabs).
+  useEffect(() => {
+    const first = setTimeout(() => void pollStatus(), 0);
+    const id = setInterval(() => void pollStatus(), running ? 2000 : 15000);
+    return () => {
+      clearTimeout(first);
+      clearInterval(id);
+    };
+  }, [running, pollStatus]);
+
+  const handleUpdateStarted = useCallback(() => {
+    setRunning(true);
+    wasRunning.current = true;
+    setRunsRefresh((n) => n + 1);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -60,8 +98,13 @@ function AppContent() {
         </header>
 
         <ProfilesSection profiles={profiles} onProfilesChange={loadProfiles} />
-        <DocumentsSection documents={documents} onDocumentsChange={loadDocuments} />
-        <RunHistoryTable />
+        <DocumentsSection
+          documents={documents}
+          onDocumentsChange={loadDocuments}
+          running={running}
+          onUpdateStarted={handleUpdateStarted}
+        />
+        <RunHistoryTable refreshTrigger={runsRefresh} />
         <Toaster position="top-center" richColors />
       </div>
     </div>

@@ -15,10 +15,10 @@ export interface Profile {
 }
 
 export interface Document {
+  id: number;
   name: string;
   profile: string;
   airac_date: string;
-  path: string;
   size: number;
   modified: string;
   is_ocr: boolean;
@@ -28,8 +28,16 @@ export interface RunSummary {
   id: string;
   timestamp: string;
   profiles: string[];
-  status: "success" | "error";
+  status: "running" | "success" | "error";
   pdf_created: boolean;
+}
+
+export interface UpdateStatus {
+  running: boolean;
+  run_id: string | null;
+  profile?: string;
+  stage?: string;
+  message?: string;
 }
 
 export interface RunDetail {
@@ -85,14 +93,30 @@ export const api = {
     return data.documents;
   },
 
-  async deleteDocument(profile: string, filename: string): Promise<void> {
-    await fetch(`${API_BASE}/documents/${encodeURIComponent(profile)}/${encodeURIComponent(filename)}`, {
+  async deleteDocument(id: number): Promise<void> {
+    await fetch(`${API_BASE}/documents/${id}`, {
       method: "DELETE",
     });
   },
 
-  getDocumentUrl(path: string): string {
-    return `${API_BASE}/documents/${path}`;
+  async downloadDocument(id: number, filename: string, zip = false): Promise<void> {
+    const res = await fetch(`${API_BASE}/documents/download`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, zip }),
+    });
+    if (!res.ok) {
+      throw new Error(`Download failed (${res.status} ${res.statusText})`);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = zip ? filename.replace(/\.pdf$/i, ".zip") : filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
   },
 
   // Runs
@@ -109,9 +133,12 @@ export const api = {
   },
 
   // Update with progress streaming
-  async triggerUpdate(profile?: string): Promise<{ status: "started" | "already_running" }> {
-    const url = profile ? `${API_BASE}/update/run?profile=${encodeURIComponent(profile)}` : `${API_BASE}/update/run`;
-    const res = await fetch(url, { method: "POST" });
+  async triggerUpdate(options: { profile?: string; force?: boolean } = {}): Promise<{ status: "started" | "already_running" }> {
+    const params = new URLSearchParams();
+    if (options.profile) params.set("profile", options.profile);
+    if (options.force) params.set("force", "true");
+    const query = params.toString();
+    const res = await fetch(`${API_BASE}/update/run${query ? `?${query}` : ""}`, { method: "POST" });
     if (!res.ok) {
       if (res.status === 409) {
         return { status: "already_running" };
@@ -120,5 +147,9 @@ export const api = {
     }
     const data = await res.json();
     return data;
+  },
+
+  async getUpdateStatus(): Promise<UpdateStatus> {
+    return jsonResponse<UpdateStatus>(await fetch(`${API_BASE}/update/status`));
   },
 };
