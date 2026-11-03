@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.2](https://github.com/FreezeManny/dfs-aip-web-app/compare/backend-v1.1.1...backend-v1.1.2) (2026-11-03)
+
+
+### Bug Fixes
+
+* **deps:** update fastapi requirement from &gt;=0.156.4 to &gt;=0.162.0 in /webui/backend in the backend group ([#49](https://github.com/FreezeManny/dfs-aip-web-app/issues/49)) ([607bbad](https://github.com/FreezeManny/dfs-aip-web-app/commit/607bbad501debc70a9cd91f09db6dbfc2e9601cc))
+
 ## [1.1.1](https://github.com/FreezeManny/dfs-aip-web-app/compare/backend-v1.1.0...backend-v1.1.1) (2026-10-25)
 
 
