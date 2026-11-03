@@ -1,14 +1,16 @@
 """
-DFS AIP Updater - Single-file FastAPI Backend
+DFS AIP Updater - FastAPI Backend (see db.py for persistence, rollover.py for retention)
 """
 
 import asyncio
 import fcntl
-import json
 import logging
 import os
 import re
 import shutil
+import sys
+import tempfile
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from contextlib import asynccontextmanager
@@ -16,11 +18,16 @@ from typing import Optional
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import FileResponse, JSONResponse
+from starlette.background import BackgroundTask
 from pydantic import BaseModel, Field, field_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+
+import db
+import rollover
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -41,24 +48,38 @@ class Settings(BaseSettings):
     
     # Minimum free disk space in GB before generating PDFs
     min_free_space_gb: float = Field(default=1.0, ge=0.1)
-    
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+
+    # Rollover: number of newest AIRAC cycles kept per profile, and how long run history is kept
+    retain_cycles: int = Field(default=2, ge=1)
+    run_retention_days: int = Field(default=180, ge=1)
+
+    # Comma-separated list of extra allowed CORS origins. The UI is served from the same
+    # origin as the API, so this is only needed for non-standard setups.
+    cors_origins: str = ""
+
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
 settings = Settings()
 
 OUTPUT_DIR = settings.output_dir
 CACHE_DIR = settings.cache_dir
 DATA_DIR = settings.data_dir
-PROFILES_FILE = DATA_DIR / "profiles.json"
-RUNS_DIR = DATA_DIR / "runs"
+DB_FILE = DATA_DIR / "app.db"
+PROFILES_FILE = DATA_DIR / "profiles.json"  # legacy, imported into SQLite on first start
+RUNS_DIR = DATA_DIR / "runs"                # legacy, imported into SQLite on first start
 LOCK_FILE = DATA_DIR / "update.lock"
+TMP_DIR = DATA_DIR / "tmp"
+
+# External tools (overridable for tests)
+AIP_SCRIPT = os.environ.get("AIP_SCRIPT", "/app/aip.py")
+OCRMYPDF_BIN = os.environ.get("OCRMYPDF_BIN", "ocrmypdf")
 
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 DATA_DIR.mkdir(parents=True, exist_ok=True)
-RUNS_DIR.mkdir(parents=True, exist_ok=True)
+TMP_DIR.mkdir(parents=True, exist_ok=True)
+
+db.init(DB_FILE)
 
 # ============== Scheduler ==============
 
@@ -79,9 +100,27 @@ async def scheduled_update():
 
 # ============== App ==============
 
+def _housekeeping_on_startup():
+    """Import legacy JSON state, and clean up after a crashed/killed previous process."""
+    db.migrate_json(PROFILES_FILE, RUNS_DIR)
+    stale = db.fail_stale_runs()
+    if stale:
+        logger.warning(f"Marked {stale} interrupted run(s) as failed")
+    rollover.cleanup_partials(OUTPUT_DIR)
+    rollover.flatten_output_dir(OUTPUT_DIR)
+    rollover.flatten_cache_dir(CACHE_DIR)
+    for leftover in TMP_DIR.iterdir():
+        try:
+            if leftover.is_file():
+                leftover.unlink()
+        except OSError as e:
+            logger.error(f"Could not remove {leftover}: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
+    _housekeeping_on_startup()
     if settings.auto_update_enabled:
         logger.info(f"Auto-update enabled: scheduled for {settings.auto_update_hour:02d}:{settings.auto_update_minute:02d} daily")
         scheduler.add_job(
@@ -101,29 +140,44 @@ async def lifespan(app: FastAPI):
     if scheduler.running:
         scheduler.shutdown()
 
+
+class SelectiveGZipMiddleware:
+    """GZip for the SPA assets and JSON API, but never for document downloads.
+
+    PDFs and ZIPs are already compressed; gzipping them wastes CPU and drops Content-Length,
+    which large downloads on flaky mobile connections rely on.
+    """
+
+    def __init__(self, app):
+        self.app = app
+        self.gzip = GZipMiddleware(app, minimum_size=1024)
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and not scope["path"].startswith("/api/documents/"):
+            await self.gzip(scope, receive, send)
+        else:
+            await self.app(scope, receive, send)
+
+
 app = FastAPI(title="DFS AIP Updater", version="3.0.0", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+# The UI is served from the same origin as the API, so CORS is only enabled on request.
+_cors_origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
+if _cors_origins:
+    app.add_middleware(CORSMiddleware, allow_origins=_cors_origins, allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(SelectiveGZipMiddleware)
 
 _update_lock_file: Optional[object] = None
-_current_run_logs: dict[str, list] = {}  # profile_name -> list of logs
-_current_run_metadata: dict[str, any] = {}  # metadata about the current run
+_current_run_id: Optional[str] = None  # id of the run in progress, if any
 
 
 def _log_progress(profile: str, stage: str, message: str = "", status: str = "info"):
-    """Log progress message with profile context"""
-    msg = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "profile": profile,
-        "stage": stage,
-        "message": message,
-        "status": status,  # "info", "warning", "error", "success"
-    }
-    
-    # Store in current run logs
-    if profile and profile != "":
-        if profile not in _current_run_logs:
-            _current_run_logs[profile] = []
-        _current_run_logs[profile].append(msg)
+    """Log progress message with profile context (persisted live to the current run)"""
+    # status: "info", "warning", "error", "success"
+    if _current_run_id is not None:
+        try:
+            db.add_log(_current_run_id, profile or "", stage, message, status)
+        except Exception:
+            logger.exception("Failed to persist run log")
     
     logger.info(f"[{profile}] {stage}: {message}")
 
@@ -155,17 +209,13 @@ class CleanupRequest(BaseModel):
     delete_output: bool = False
 
 
-# ============== Profile Storage ==============
-
-def _load_profiles() -> list[dict]:
-    if not PROFILES_FILE.exists():
-        return []
-    return json.loads(PROFILES_FILE.read_text())
+class DocumentDownloadRequest(BaseModel):
+    id: int
+    zip: bool = False
+    preview: bool = False
 
 
-def _save_profiles(profiles: list[dict]) -> None:
-    PROFILES_FILE.write_text(json.dumps(profiles, indent=2))
-
+# ============== Helpers ==============
 
 def _sanitize(name: str) -> str:
     return "".join(c if c.isalnum() or c in "-_" else "_" for c in name)
@@ -258,54 +308,138 @@ def _validate_path(base_dir: Path, *parts: str) -> Path:
 
 @app.get("/api/profiles")
 def list_profiles():
-    return {"profiles": sorted(_load_profiles(), key=lambda x: x["name"])}
+    return {"profiles": db.list_profiles()}
 
 
 @app.post("/api/profiles")
 def create_profile(data: ProfileData):
-    profiles = _load_profiles()
-    if any(p["name"] == data.name for p in profiles):
+    if not db.insert_profile(data.model_dump()):
         raise HTTPException(400, f"Profile '{data.name}' already exists")
-    
-    profiles.append(data.model_dump())
-    _save_profiles(profiles)
-    (OUTPUT_DIR / _sanitize(data.name)).mkdir(parents=True, exist_ok=True)
     return {"status": "ok"}
 
 
 @app.put("/api/profiles/{name}")
 def update_profile(name: str, data: ProfileData):
-    profiles = _load_profiles()
-    for i, p in enumerate(profiles):
-        if p["name"] == name:
-            profiles[i] = data.model_dump()
-            _save_profiles(profiles)
-            return {"status": "ok"}
-    raise HTTPException(404, "Profile not found")
+    if not db.update_profile(name, data.model_dump()):
+        if db.profile_exists(name):
+            raise HTTPException(400, f"Profile '{data.name}' already exists")
+        raise HTTPException(404, "Profile not found")
+    return {"status": "ok"}
 
 
 @app.delete("/api/profiles/{name}")
 def delete_profile(name: str):
-    profiles = _load_profiles()
-    new_profiles = [p for p in profiles if p["name"] != name]
-    if len(new_profiles) == len(profiles):
+    if not db.delete_profile(name):
         raise HTTPException(404, "Profile not found")
-    _save_profiles(new_profiles)
     return {"status": "ok"}
 
 
 # ============== Update ==============
 
-async def run_update(profile_name: str | None = None):
+async def _generate_raw_pdf(profile: dict, raw_path: Path, cache_path: str, force: bool) -> bool:
+    """Download pages and build the raw PDF. Written to a .partial file, renamed on success."""
+    name = profile["name"]
+    partial = raw_path.with_name(raw_path.name + rollover.PARTIAL_SUFFIX)
+    partial.unlink(missing_ok=True)
+
+    _log_progress(name, "pdf_gen", "Generating PDF (forced refresh)" if force else "Generating PDF", "info")
+    filter_args = [arg for f in profile.get("filters", []) for arg in ["-f", f]]
+    refresh_args = ["--refresh"] if force else []
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable, "-u", AIP_SCRIPT, "--cache", cache_path,
+        "pdf", "--output", str(partial),
+        "summary", f"--{profile['flight_rule']}", *filter_args, *refresh_args,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+    )
+    stderr_task = asyncio.create_task(proc.stderr.read())
+
+    # Stream stdout to show page downloads
+    page_count = 0
+    while True:
+        line = await proc.stdout.readline()
+        if not line:
+            break
+        page_name = line.decode().strip()
+        if page_name:
+            page_count += 1
+            _log_progress(name, "pdf_gen", f"Downloaded page {page_count}: {page_name}", "info")
+
+    await proc.wait()
+    stderr = await stderr_task
+
+    if proc.returncode == 0 and partial.exists():
+        os.replace(partial, raw_path)
+        size_mb = raw_path.stat().st_size / (1024 * 1024)
+        _log_progress(name, "pdf_gen", f"PDF complete ({size_mb:.1f} MB)", "success")
+        return True
+
+    partial.unlink(missing_ok=True)
+    _log_progress(name, "pdf_gen", f"Failed: {stderr.decode()[-1500:]}", "error")
+    return False
+
+
+async def _ocr_pdf(name: str, raw_path: Path, ocr_path: Path) -> bool:
+    """OCR ``raw_path``. Written to a .partial file, atomically replacing ``ocr_path`` on success."""
+    partial = ocr_path.with_name(ocr_path.name + rollover.PARTIAL_SUFFIX)
+    partial.unlink(missing_ok=True)
+
+    _log_progress(name, "ocr", f"Starting OCR: {raw_path.name} -> {ocr_path.name}", "info")
+    _log_progress(name, "ocr", f"Input PDF size: {raw_path.stat().st_size / (1024 * 1024):.1f} MB", "info")
+    _log_progress(name, "ocr", f"Using {settings.ocr_jobs} parallel worker(s)", "info")
+
+    proc = await asyncio.create_subprocess_exec(
+        OCRMYPDF_BIN, "--jobs", str(settings.ocr_jobs), "--verbose", "1", str(raw_path), str(partial),
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+    )
+    stdout_task = asyncio.create_task(proc.stdout.read())
+
+    # Stream stderr to capture OCR progress
+    stderr_lines = []
+    while True:
+        line = await proc.stderr.readline()
+        if not line:
+            break
+        decoded = line.decode().strip()
+        stderr_lines.append(decoded)
+        if decoded:
+            _log_progress(name, "ocr", decoded, "info")
+    stdout = await stdout_task
+    await proc.wait()
+
+    if proc.returncode == 0 and partial.exists():
+        os.replace(partial, ocr_path)
+        ocr_size_mb = ocr_path.stat().st_size / (1024 * 1024)
+        _log_progress(name, "ocr", f"OCR complete ({ocr_size_mb:.1f} MB)", "success")
+        return True
+
+    partial.unlink(missing_ok=True)
+    _log_progress(name, "ocr", f"Process exited with code {proc.returncode}", "error")
+    _log_progress(name, "ocr", f"Last 10 stderr lines: {stderr_lines[-10:]}", "error")
+    if stdout:
+        _log_progress(name, "ocr", f"stdout: {stdout.decode()[:500]}", "error")
+    return False
+
+
+async def run_update(profile_name: str | None = None, force: bool = False):
+    """Update all enabled profiles (or just ``profile_name``).
+
+    With ``force`` the AIP cache is bypassed and existing documents are rebuilt; the old
+    document stays in place until the new one is complete.
+    """
+    global _current_run_id
+
     # Acquire lock to prevent concurrent updates
     _acquire_update_lock()
-    
-    # Initialize run metadata
-    global _current_run_metadata
-    _current_run_metadata = {"pdf_created": False}
+
+    try:
+        run_id = db.start_run(datetime.now().strftime("%Y%m%d_%H%M%S"))
+    except Exception:
+        _release_update_lock()
+        raise
+    _current_run_id = run_id
     
     try:
-        _log_progress("", "system", "Starting update process", "info")
+        _log_progress("", "system", "Starting forced update process" if force else "Starting update process", "info")
         
         # Check disk space
         has_space, free_gb = _check_disk_space()
@@ -315,7 +449,7 @@ async def run_update(profile_name: str | None = None):
             raise HTTPException(507, error_msg)
         
         _log_progress("", "system", f"Disk space: {free_gb:.2f} GB available", "info")
-        profiles = [p for p in _load_profiles() if p.get("enabled", True)]
+        profiles = [p for p in db.list_profiles() if p.get("enabled", True)]
         if profile_name:
             profiles = [p for p in profiles if p["name"] == profile_name]
 
@@ -325,15 +459,15 @@ async def run_update(profile_name: str | None = None):
             profile_name_str = profile['name']
             try:
                 _log_progress(profile_name_str, "init", "Starting profile processing", "info")
-                profile_dir = OUTPUT_DIR / _sanitize(profile["name"])
-                profile_dir.mkdir(parents=True, exist_ok=True)
-                cache_path = str(CACHE_DIR / "dfs-aip")
+                OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+                cache_path = str(CACHE_DIR)
 
                 # Fetch TOC
                 _log_progress(profile_name_str, "toc_fetch", f"Fetching TOC ({profile['flight_rule'].upper()})", "info")
+                refresh_args = ["--refresh"] if force else []
                 proc = await asyncio.create_subprocess_exec(
-                    "python3", "/app/aip.py", "--cache", cache_path,
-                    "toc", "fetch", f"--{profile['flight_rule']}",
+                    sys.executable, AIP_SCRIPT, "--cache", cache_path,
+                    "toc", "fetch", f"--{profile['flight_rule']}", *refresh_args,
                     stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
                 )
                 stdout, stderr = await proc.communicate()
@@ -344,7 +478,7 @@ async def run_update(profile_name: str | None = None):
 
                 # Get AIRAC date
                 proc = await asyncio.create_subprocess_exec(
-                    "python3", "/app/aip.py", "--cache", cache_path,
+                    sys.executable, AIP_SCRIPT, "--cache", cache_path,
                     "toc", "list", f"--{profile['flight_rule']}",
                     stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
                 )
@@ -357,85 +491,34 @@ async def run_update(profile_name: str | None = None):
 
                 airac_date = lines[0].split()[1]
                 profile_sanitized = _sanitize(profile['name'])
-                output_path = profile_dir / f"{profile_sanitized}_{airac_date}.pdf"
-                ocr_output_path = profile_dir / f"{profile_sanitized}_{airac_date}_ocr.pdf"
+                output_path = OUTPUT_DIR / f"{profile_sanitized}_{airac_date}.pdf"
+                ocr_output_path = OUTPUT_DIR / f"{profile_sanitized}_{airac_date}_ocr.pdf"
                 _log_progress(profile_name_str, "init", f"AIRAC date: {airac_date}", "info")
-                
-                # Check if we need to generate PDF
-                if output_path.exists():
-                    _log_progress(profile_name_str, "pdf_gen", "PDF already exists", "info")
-                else:
-                    # Generate PDF
-                    _log_progress(profile_name_str, "pdf_gen", "Generating PDF", "info")
-                    _current_run_metadata["pdf_created"] = True
-                    filter_args = [arg for f in profile.get("filters", []) for arg in ["-f", f]]
-                    proc = await asyncio.create_subprocess_exec(
-                        "python3", "-u", "/app/aip.py", "--cache", cache_path,
-                        "pdf", "--output", str(output_path),
-                        "summary", f"--{profile['flight_rule']}", *filter_args,
-                        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-                    )
-                    
-                    # Stream stdout to show page downloads
-                    page_count = 0
-                    while True:
-                        line = await proc.stdout.readline()
-                        if not line:
-                            break
-                        page_name = line.decode().strip()
-                        if page_name:
-                            page_count += 1
-                            _log_progress(profile_name_str, "pdf_gen", f"Downloaded page {page_count}: {page_name}", "info")
-                    
-                    await proc.wait()
-                    stderr = await proc.stderr.read()
 
-                    if proc.returncode == 0:
-                        size_mb = output_path.stat().st_size / (1024 * 1024)
-                        _log_progress(profile_name_str, "pdf_gen", f"PDF complete ({size_mb:.1f} MB)", "success")
-                    else:
-                        _log_progress(profile_name_str, "pdf_gen", f"Failed: {stderr.decode()[-1500:]}", "error")
-                        continue
-
-                # Check if we need to generate OCR version
-                if not ocr_output_path.exists():
-                    # Generate OCR version
-                    _log_progress(profile_name_str, "ocr", f"Starting OCR: {output_path.name} -> {ocr_output_path.name}", "info")
-                    _log_progress(profile_name_str, "ocr", f"Input PDF size: {output_path.stat().st_size / (1024 * 1024):.1f} MB", "info")
-                    _log_progress(profile_name_str, "ocr", f"Using {settings.ocr_jobs} parallel worker(s)", "info")
-                    
-                    proc = await asyncio.create_subprocess_exec(
-                        "ocrmypdf", "--jobs", str(settings.ocr_jobs), "--verbose", "1", str(output_path), str(ocr_output_path),
-                        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-                    )
-                    
-                    # Stream stderr to capture OCR progress
-                    async def log_stderr():
-                        stderr_lines = []
-                        while True:
-                            line = await proc.stderr.readline()
-                            if not line:
-                                break
-                            decoded = line.decode().strip()
-                            stderr_lines.append(decoded)
-                            if decoded:
-                                _log_progress(profile_name_str, "ocr", decoded, "info")
-                        return stderr_lines
-                    
-                    stderr_lines = await log_stderr()
-                    stdout = await proc.stdout.read()
-                    await proc.wait()
-                    
-                    if proc.returncode == 0:
-                        ocr_size_mb = ocr_output_path.stat().st_size / (1024 * 1024)
-                        _log_progress(profile_name_str, "ocr", f"OCR complete ({ocr_size_mb:.1f} MB)", "success")
-                    else:
-                        _log_progress(profile_name_str, "ocr", f"Process exited with code {proc.returncode}", "error")
-                        _log_progress(profile_name_str, "ocr", f"Last 10 stderr lines: {stderr_lines[-10:]}", "error")
-                        if stdout:
-                            _log_progress(profile_name_str, "ocr", f"stdout: {stdout.decode()[:500]}", "error")
-                else:
+                # The OCR'd PDF is the deliverable: if it exists the cycle is done (unless forced).
+                # The raw PDF is only an intermediate that is deleted once OCR succeeds.
+                if ocr_output_path.exists() and not force:
                     _log_progress(profile_name_str, "ocr", "OCR PDF already exists", "success")
+                else:
+                    if force or not output_path.exists():
+                        db.mark_pdf_created(run_id)
+                        if not await _generate_raw_pdf(profile, output_path, cache_path, force):
+                            continue
+                    else:
+                        _log_progress(profile_name_str, "pdf_gen", "Raw PDF already exists, resuming with OCR", "info")
+
+                    if not await _ocr_pdf(profile_name_str, output_path, ocr_output_path):
+                        continue  # keep the raw PDF so OCR can be retried without re-downloading
+
+                # Rollover: drop raw PDFs that have an OCR copy, then old AIRAC cycles
+                removed = rollover.drop_raw_with_ocr(OUTPUT_DIR, profile_sanitized)
+                removed += rollover.prune_profile_dir(OUTPUT_DIR, settings.retain_cycles, profile_sanitized)
+                if removed:
+                    _log_progress(
+                        profile_name_str, "rollover",
+                        f"Removed {len(removed)} file(s): {', '.join(sorted(p.name for p in removed))}",
+                        "info",
+                    )
                 
                 _log_progress(profile_name_str, "complete", "Profile processing complete", "success")
 
@@ -450,17 +533,27 @@ async def run_update(profile_name: str | None = None):
         raise HTTPException(500, f"Update failed: {str(e)}")
     finally:
         _log_progress("", "system", "Update process finished", "info")
-        _save_run()
-        _current_run_logs.clear()
-        _current_run_metadata.clear()
+        try:
+            db.finish_run(run_id)
+            logger.info(f"Saved run {run_id}")
+            pruned = db.prune_runs(settings.run_retention_days)
+            if pruned:
+                logger.info(f"Pruned {pruned} old run(s)")
+            rollover.cleanup_partials(OUTPUT_DIR)
+        except Exception:
+            logger.exception("Post-run housekeeping failed")
+        _current_run_id = None
         _release_update_lock()
 
 
 @app.post("/api/update/run")
-async def trigger_update(background_tasks: BackgroundTasks, profile: str | None = None):
+async def trigger_update(background_tasks: BackgroundTasks, profile: str | None = None, force: bool = False):
     # Check if update is already running
     if _update_lock_file is not None:
-        return {"status": "already_running"}
+        return JSONResponse({"status": "already_running"}, status_code=409)
+
+    if profile and not db.profile_exists(profile):
+        raise HTTPException(404, "Profile not found")
     
     # Check disk space before starting
     has_space, free_gb = _check_disk_space()
@@ -470,8 +563,23 @@ async def trigger_update(background_tasks: BackgroundTasks, profile: str | None 
             f"Insufficient disk space: {free_gb:.2f} GB free, {settings.min_free_space_gb:.2f} GB required"
         )
     
-    background_tasks.add_task(run_update, profile)
+    background_tasks.add_task(run_update, profile, force)
     return {"status": "started"}
+
+
+@app.get("/api/update/status")
+def update_status():
+    """Whether an update (or cleanup) currently holds the lock, and what the run is doing."""
+    run_id = _current_run_id
+    status: dict = {"running": _update_lock_file is not None, "run_id": run_id}
+    if run_id is not None:
+        last = db.last_log(run_id) or {}
+        status.update(
+            profile=last.get("profile", ""),
+            stage=last.get("stage", ""),
+            message=last.get("message", ""),
+        )
+    return status
 
 
 @app.post("/api/cleanup")
@@ -499,12 +607,7 @@ def run_cleanup(data: CleanupRequest):
                     item.unlink()
                 elif item.is_dir():
                     shutil.rmtree(item)
-            # Recreate profile directories
-            try:
-                for profile in _load_profiles():
-                    (OUTPUT_DIR / _sanitize(profile["name"])).mkdir(parents=True, exist_ok=True)
-            except Exception:
-                pass # Ignore if profiles can't be loaded or created
+            db.reconcile_documents(OUTPUT_DIR)
             results.append("Documents deleted")
             
         logger.info(f"Cleanup performed: {', '.join(results)}")
@@ -522,87 +625,23 @@ def run_cleanup(data: CleanupRequest):
 @app.get("/api/runs")
 def list_runs():
     """List all past runs"""
-    runs = []
-    for run_file in sorted(RUNS_DIR.glob("*.json"), reverse=True):
-        try:
-            data = json.loads(run_file.read_text())
-            logs = data.get("logs", {})
-            metadata = data.get("metadata", {})
-            
-            # Determine overall status: "success" if all profiles completed without error, else "error"
-            status = "success"
-            for profile_logs in logs.values():
-                if profile_logs and profile_logs[-1].get("status") == "error":
-                    status = "error"
-                    break
-            
-            runs.append({
-                "id": run_file.stem,
-                "timestamp": data.get("timestamp"),
-                "profiles": list(logs.keys()),
-                "status": status,
-                "pdf_created": metadata.get("pdf_created", False),
-            })
-        except Exception as e:
-            logger.error(f"Failed to read run {run_file}: {e}")
-    return {"runs": runs}
+    return {"runs": db.list_runs()}
 
 
 @app.get("/api/runs/{run_id}")
 def get_run(run_id: str):
     """Get logs for a specific run"""
-    run_file = RUNS_DIR / f"{run_id}.json"
-    if not run_file.exists():
+    run = db.get_run(run_id)
+    if run is None:
         raise HTTPException(404, "Run not found")
-    
-    try:
-        data = json.loads(run_file.read_text())
-        return data
-    except Exception as e:
-        raise HTTPException(500, f"Failed to read run: {str(e)}")
-
-
-def _save_run():
-    """Save current run logs to file"""
-    run_timestamp = datetime.now(timezone.utc).isoformat()
-    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-    
-    run_data = {
-        "id": run_id,
-        "timestamp": run_timestamp,
-        "logs": _current_run_logs.copy(),
-        "metadata": _current_run_metadata.copy(),
-    }
-    
-    run_file = RUNS_DIR / f"{run_id}.json"
-    run_file.write_text(json.dumps(run_data, indent=2))
-    logger.info(f"Saved run {run_id}")
+    return run
 
 
 # ============== Documents ==============
 
 @app.get("/api/documents")
 def list_documents():
-    documents = []
-    for profile_dir in OUTPUT_DIR.iterdir():
-        if profile_dir.is_dir():
-            for f in profile_dir.glob("*.pdf"):
-                stat = f.stat()
-                is_ocr = f.stem.endswith("_ocr")
-                stem = f.stem.replace("_ocr", "") if is_ocr else f.stem
-                # Extract airac_date from "ProfileName_YYYY-MM-DD" format
-                parts = stem.split("_", 1)  # Split on first underscore
-                airac_date = parts[1] if len(parts) > 1 else stem
-                documents.append({
-                    "name": f.name,
-                    "profile": profile_dir.name,
-                    "airac_date": airac_date,
-                    "path": str(f.relative_to(OUTPUT_DIR)),
-                    "size": stat.st_size,
-                    "modified": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
-                    "is_ocr": is_ocr,
-                })
-    return {"documents": sorted(documents, key=lambda x: x["modified"], reverse=True)}
+    return {"documents": db.reconcile_documents(OUTPUT_DIR)}
 
 
 class FastFileResponse(FileResponse):
@@ -614,39 +653,107 @@ class FastFileResponse(FileResponse):
         self.chunk_size = chunk_size
 
 
-@app.get("/api/documents/{profile}/{filename}")
-def download_document(profile: str, filename: str, preview: bool = False):
-    # Validate path to prevent directory traversal attacks
-    file_path = _validate_path(OUTPUT_DIR, profile, filename)
-    
-    if not file_path.exists():
+def _document_path_by_id(doc_id: int) -> Path:
+    doc = db.get_document(doc_id)
+    if doc is None:
+        db.reconcile_documents(OUTPUT_DIR)
+        doc = db.get_document(doc_id)
+    if doc is None:
         raise HTTPException(404, "Document not found")
+    file_path = _validate_path(OUTPUT_DIR, doc["name"])
     if not file_path.is_file():
-        raise HTTPException(400, "Invalid path: not a file")
-    
+        raise HTTPException(404, "Document not found")
+    return file_path
+
+
+def _serve_pdf(file_path: Path, preview: bool = False) -> FastFileResponse:
     media_type = "application/pdf" if preview else "application/octet-stream"
     content_disposition_type = "inline" if preview else "attachment"
-    
     return FastFileResponse(
         file_path,
         media_type=media_type,
-        filename=filename,
+        filename=file_path.name,
         content_disposition_type=content_disposition_type,
     )
 
 
-@app.delete("/api/documents/{profile}/{filename}")
-def delete_document(profile: str, filename: str):
-    # Validate path to prevent directory traversal attacks
-    file_path = _validate_path(OUTPUT_DIR, profile, filename)
-    
-    if not file_path.exists():
-        raise HTTPException(404, "Document not found")
-    if not file_path.is_file():
-        raise HTTPException(400, "Invalid path: not a file")
-    
-    file_path.unlink()
+def _serve_zip(src: Path) -> FastFileResponse:
+    fd, tmp_name = tempfile.mkstemp(dir=TMP_DIR, suffix=".zip")
+    os.close(fd)
+    tmp = Path(tmp_name)
+    try:
+        # PDFs are already compressed, so store instead of deflating.
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_STORED) as z:
+            z.write(src, arcname=src.name)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
+
+    return FastFileResponse(
+        tmp,
+        media_type="application/zip",
+        filename=f"{src.stem}.zip",
+        content_disposition_type="attachment",
+        background=BackgroundTask(tmp.unlink, missing_ok=True),
+    )
+
+
+@app.post("/api/documents/download")
+def download_document_post(data: DocumentDownloadRequest):
+    """Download a document (PDF or ZIP) via POST so no path or document ID appears in the URL."""
+    file_path = _document_path_by_id(data.id)
+    if data.zip:
+        return _serve_zip(file_path)
+    return _serve_pdf(file_path, preview=data.preview)
+
+
+@app.get("/api/documents/{doc_id}")
+def download_document(doc_id: int, preview: bool = False):
+    file_path = _document_path_by_id(doc_id)
+    return _serve_pdf(file_path, preview=preview)
+
+
+@app.get("/api/documents/{doc_id}/zip")
+def download_document_zip(doc_id: int):
+    """Download a document wrapped in a ZIP.
+
+    Mobile browsers open PDFs in their viewer instead of saving them; a ZIP is not previewable,
+    so it is always saved as a file.
+    """
+    src = _document_path_by_id(doc_id)
+    return _serve_zip(src)
+
+
+@app.delete("/api/documents/{doc_id}")
+def delete_document(doc_id: int):
+    _document_path_by_id(doc_id).unlink()
+    db.reconcile_documents(OUTPUT_DIR)
     return {"status": "ok"}
+
+# ============== Frontend (static SPA) ==============
+# Registered last so the /api routes above take precedence. Only active when a
+# built frontend is present (the single-container image); in dev, Vite serves it.
+
+STATIC_DIR = Path(os.environ.get("STATIC_DIR", "static"))
+
+
+if STATIC_DIR.is_dir():
+    _static_root = STATIC_DIR.resolve()
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    def serve_spa(full_path: str):
+        if full_path == "api" or full_path.startswith("api/"):
+            raise HTTPException(404, "Not found")
+        candidate = (_static_root / full_path).resolve()
+        if full_path and candidate.is_relative_to(_static_root) and candidate.is_file():
+            headers = {}
+            if candidate.parent.name == "assets":
+                # Content-hashed filenames: safe to cache forever.
+                headers["Cache-Control"] = "public, max-age=31536000, immutable"
+            return FileResponse(candidate, headers=headers)
+        # index.html must be revalidated so a new release is picked up immediately.
+        return FileResponse(_static_root / "index.html", headers={"Cache-Control": "no-cache"})
+
 
 if __name__ == "__main__":
     import uvicorn
