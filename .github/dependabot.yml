@@ -62,7 +62,7 @@ updates:
   # image, so `fix` across the board rather than splitting by dependency-type:
   # bumping vite or typescript changes the bundle users get just as much as
   # bumping react does.
-  - package-ecosystem: "npm"
+  - package-ecosystem: "bun"
     directory: "/webui/frontend"
     schedule:
       interval: weekly
@@ -74,7 +74,7 @@ updates:
         patterns: ["*"]
     # TypeScript 7 is held back by the linter rather than by our code:
     # typescript-eslint declares `typescript: ">=4.8.4 <6.1.0"` and refuses to
-    # load against 7, so `pnpm lint` exits before reading a file and the whole
+    # load against 7, so `bun run lint` exits before reading a file and the whole
     # grouped PR goes red. Grouping makes that one incompatibility block the
     # other twenty-odd bumps, which is what happened to #10. Drop this entry
     # once typescript-eslint ships TS 7 support:

@@ -81,33 +81,22 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up Node
-        uses: actions/setup-node@v7
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          # Same major version as the build stage in webui/Dockerfile.
-          node-version: "22"
-
-      # The pnpm version comes from the `packageManager` field in
-      # package.json, so this job, the Dockerfile and a local checkout all run
-      # the same one. Unpinned, corepack resolves "latest" per invocation, and
-      # a cached install layer written by an older pnpm makes the next
-      # `pnpm build` abort trying to re-install over it.
-      - name: Enable pnpm
-        run: corepack enable pnpm
+          bun-version: latest
 
       - name: Install
         working-directory: webui/frontend
-        env:
-          COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
-        run: pnpm install --frozen-lockfile
+        run: bun install --frozen-lockfile
 
-      # The image build runs `pnpm build` but not the linter, so this is the
+      # The image build runs `bun run build` but not the linter, so this is the
       # only place eslint runs at all.
       - name: Lint
         working-directory: webui/frontend
-        run: pnpm lint
+        run: bun run lint
 
-      # `pnpm build` is `tsc -b && vite build`, so this type-checks too.
+      # `bun run build` is `tsc -b && vite build`, so this type-checks too.
       - name: Build
         working-directory: webui/frontend
-        run: pnpm build
+        run: bun run build
