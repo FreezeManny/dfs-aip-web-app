@@ -19,11 +19,11 @@ concurrency:
 permissions:
   contents: read
 
-# One job per release-please package. Both run on every PR, deliberately
-# unfiltered by path: the two halves share an HTTP contract, so a change to the
-# backend can break the frontend and vice versa. Path filters would also make
-# either job unusable as a required check — a required check that is filtered
-# out never reports, and the PR waits on it forever.
+# Two jobs, both run on every PR and deliberately unfiltered by path: the two
+# halves share an HTTP contract, so a change to the backend can break the
+# frontend and vice versa. Path filters would also make either job unusable as
+# a required check — a required check that is filtered out never reports, and
+# the PR waits on it forever.
 jobs:
   # Named `backend` because the branch ruleset on main requires that check by
   # name; renaming the job silently un-gates the branch.
@@ -34,34 +34,43 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up Python
-        uses: actions/setup-python@v7
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
         with:
-          # Same version as the base image in webui/backend/Dockerfile.
-          python-version: "3.12"
+          python-version: "3.14"
+          enable-cache: true
+          cache-dependency-glob: "webui/backend/uv.lock"
 
       # The image build below installs the dependencies but never imports the
-      # app, so a syntax error in main.py would otherwise only surface when the
-      # container starts. vendor/ is excluded on purpose: it is a verbatim copy
-      # of upstream, refreshed only by vendor/update.sh.
+      # app, so the unit tests are what catch a broken main.py. vendor/ is
+      # excluded from byte-compiling on purpose: it is a verbatim copy of
+      # upstream, refreshed only by vendor/update.sh.
+      - name: Install dependencies
+        working-directory: webui/backend
+        run: uv sync --frozen
+
       - name: Byte-compile
-        run: python -m compileall -q webui/backend
+        working-directory: webui/backend
+        run: uv run python -m compileall -q .
+
+      - name: Unit tests
+        working-directory: webui/backend
+        run: uv run pytest tests -q
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      # Build the image that ships, without pushing it: this is what catches a
-      # bad requirements.txt bump or a broken apt package. Same cache scope as
-      # docker-publish.yml, so the release build reuses the layers this PR
-      # already paid for.
-      - name: Build backend image
+      # Build the single image that ships, without pushing it: this catches a
+      # bad uv.lock/package bump, a broken apt package or a frontend build
+      # failure inside the image. Same cache scope as docker-publish.yml.
+      - name: Build image
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: webui/backend/Dockerfile
+          file: webui/Dockerfile
           push: false
-          cache-from: type=gha,scope=backend
-          cache-to: type=gha,mode=max,scope=backend
+          cache-from: type=gha,scope=app
+          cache-to: type=gha,mode=max,scope=app
 
   # Named `frontend` because the branch ruleset on main requires that check by
   # name; renaming the job silently un-gates the branch.
@@ -75,7 +84,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v7
         with:
-          # Same version as the build stage in webui/frontend/Dockerfile.
+          # Same major version as the build stage in webui/Dockerfile.
           node-version: "22"
 
       # The pnpm version comes from the `packageManager` field in
@@ -88,6 +97,8 @@ jobs:
 
       - name: Install
         working-directory: webui/frontend
+        env:
+          COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
         run: pnpm install --frozen-lockfile
 
       # The image build runs `pnpm build` but not the linter, so this is the
@@ -100,18 +111,3 @@ jobs:
       - name: Build
         working-directory: webui/frontend
         run: pnpm build
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      # nginx.conf and the nginx base image only exist in the image, so the
-      # pnpm build above does not cover them. Same cache scope as
-      # docker-publish.yml.
-      - name: Build frontend image
-        uses: docker/build-push-action@v7
-        with:
-          context: webui/frontend
-          file: webui/frontend/Dockerfile
-          push: false
-          cache-from: type=gha,scope=frontend
-          cache-to: type=gha,mode=max,scope=frontend
