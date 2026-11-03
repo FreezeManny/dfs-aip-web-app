@@ -1,6 +1,6 @@
 [project]
 name = "dfs-aip-backend"
-version = "1.1.2"
+version = "1.0.0"
 description = "DFS AIP Updater FastAPI backend"
 readme = "README.md"
 requires-python = ">=3.12"
