@@ -7,7 +7,6 @@ import type { Document } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
   Pagination,
@@ -18,7 +17,7 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from "@/components/ui/pagination";
-import { Archive, Download, Loader2, Trash2, FileText, X } from "lucide-react";
+import { Archive, Download, Loader2, Trash2, FileText } from "lucide-react";
 import { toast } from "sonner";
 
 interface DocumentsSectionProps {
@@ -94,7 +93,6 @@ export function DocumentsSection({
       {
         accessorKey: "profile",
         header: "Profile",
-        filterFn: "includesString",
         cell: ({ row }) => (
           <div className="flex items-center gap-2">
             <FileText className="h-4 w-4 text-muted-foreground" />
@@ -105,7 +103,6 @@ export function DocumentsSection({
       {
         accessorKey: "airac_date",
         header: "AIRAC",
-        filterFn: "includesString",
         cell: ({ row }) => (
           <div className="flex items-center gap-2">
             {row.getValue("airac_date")}
@@ -120,23 +117,15 @@ export function DocumentsSection({
       {
         accessorKey: "size",
         header: "Size",
-        enableColumnFilter: false,
         cell: ({ row }) => formatBytes(row.getValue("size")),
       },
       {
         accessorKey: "modified",
         header: "Date",
-        filterFn: (row, columnId, filterValue) => {
-          const raw = String(row.getValue(columnId) ?? "");
-          const formatted = formatDate(raw);
-          const needle = String(filterValue ?? "").toLowerCase();
-          return raw.toLowerCase().includes(needle) || formatted.toLowerCase().includes(needle);
-        },
         cell: ({ row }) => formatDate(row.getValue("modified")),
       },
       {
         id: "actions",
-        enableColumnFilter: false,
         header: () => <div className="text-right">Actions</div>,
         cell: ({ row }) => {
           const d = row.original;
@@ -176,8 +165,6 @@ export function DocumentsSection({
     },
   });
 
-  const hasActiveFilters = table.state.columnFilters.length > 0;
-
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between">
@@ -214,51 +201,6 @@ export function DocumentsSection({
                       ))}
                     </TableRow>
                   ))}
-                  <TableRow className="bg-muted/30 hover:bg-muted/30">
-                    {table.getHeaderGroups()[0]?.headers.map((header) => {
-                      const column = header.column;
-                      if (column.id === "actions") {
-                        return (
-                          <TableHead key={header.id} className="py-1.5 text-right">
-                            {hasActiveFilters && (
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                className="h-7 px-2 text-xs"
-                                onClick={() => {
-                                  table.resetColumnFilters();
-                                  table.setPageIndex(0);
-                                }}
-                              >
-                                <X className="mr-1 h-3 w-3" /> Clear
-                              </Button>
-                            )}
-                          </TableHead>
-                        );
-                      }
-                      if (!column.getCanFilter()) {
-                        return <TableHead key={header.id} className="py-1.5" />;
-                      }
-                      const placeholders: Record<string, string> = {
-                        profile: "Filter profile...",
-                        airac_date: "Filter AIRAC...",
-                        modified: "Filter date...",
-                      };
-                      return (
-                        <TableHead key={header.id} className="py-1.5">
-                          <Input
-                            placeholder={placeholders[column.id] ?? "Filter..."}
-                            value={(column.getFilterValue() as string) ?? ""}
-                            onChange={(e) => {
-                              column.setFilterValue(e.target.value || undefined);
-                              table.setPageIndex(0);
-                            }}
-                            className="h-7 text-xs"
-                          />
-                        </TableHead>
-                      );
-                    })}
-                  </TableRow>
                 </TableHeader>
                 <TableBody>
                   {table.getRowModel().rows?.length ? (
@@ -280,7 +222,7 @@ export function DocumentsSection({
                         colSpan={columns.length}
                         className="h-24 text-center text-muted-foreground"
                       >
-                        No matching documents
+                        No documents yet
                       </TableCell>
                     </TableRow>
                   )}
