@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { flexRender, useTable } from "@tanstack/react-table";
 import { features, getPaginationItems, type Features } from "@/lib/table";
@@ -39,6 +39,61 @@ import {
 } from "@/components/ui/pagination";
 import { CheckCircle, AlertCircle, Loader2, X } from "lucide-react";
 
+const LOG_PAGE_SIZE = 200;
+
+type LogEntry = RunDetail["logs"][string][number];
+
+function ProfileLogCard({
+  profileName,
+  messages,
+}: {
+  profileName: string;
+  messages: LogEntry[];
+}) {
+  const reversed = useMemo(() => [...messages].reverse(), [messages]);
+  const [visibleCount, setVisibleCount] = useState(LOG_PAGE_SIZE);
+
+  const visibleMessages = reversed.slice(0, visibleCount);
+
+  return (
+    <Card className="border">
+      <CardHeader className="pb-3 flex flex-row items-center justify-between">
+        <CardTitle className="text-base">{profileName}</CardTitle>
+        <span className="text-xs text-muted-foreground">
+          {messages.length.toLocaleString()} {messages.length === 1 ? "entry" : "entries"}
+        </span>
+      </CardHeader>
+      <CardContent>
+        <div
+          className="text-sm space-y-1.5 font-mono bg-muted/50 p-3 rounded max-h-80 overflow-y-auto"
+          onScroll={(e) => {
+            if (visibleCount >= reversed.length) return;
+            const el = e.currentTarget;
+            if (el.scrollTop + el.clientHeight >= el.scrollHeight - 150) {
+              setVisibleCount((c) => Math.min(c + LOG_PAGE_SIZE, reversed.length));
+            }
+          }}
+        >
+          {visibleMessages.map((msg, i) => (
+            <div
+              key={i}
+              className={
+                msg.status === "error"
+                  ? "text-red-600"
+                  : msg.status === "success"
+                  ? "text-green-600"
+                  : "text-muted-foreground"
+              }
+            >
+              <span className="font-semibold">[{msg.stage}]</span> {msg.message}
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 interface RunHistoryTableProps {
   refreshTrigger?: number;
 }
@@ -46,6 +101,7 @@ interface RunHistoryTableProps {
 export function RunHistoryTable({ refreshTrigger = 0 }: RunHistoryTableProps) {
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [selectedRunDetail, setSelectedRunDetail] = useState<RunDetail | null>(null);
+  const [loadingRunId, setLoadingRunId] = useState<string | null>(null);
 
   useEffect(() => {
     api
@@ -55,11 +111,14 @@ export function RunHistoryTable({ refreshTrigger = 0 }: RunHistoryTableProps) {
   }, [refreshTrigger]);
 
   const viewRunDetail = async (runId: string) => {
+    setLoadingRunId(runId);
     try {
       const detail = await api.getRun(runId);
       setSelectedRunDetail(detail);
     } catch (e) {
       console.error("Failed to load run detail:", e);
+    } finally {
+      setLoadingRunId(null);
     }
   };
 
@@ -151,15 +210,20 @@ export function RunHistoryTable({ refreshTrigger = 0 }: RunHistoryTableProps) {
     {
       id: "actions",
       enableColumnFilter: false,
-      cell: ({ row }) => (
-        <Button
-          onClick={() => viewRunDetail(row.original.id)}
-          variant="outline"
-          size="sm"
-        >
-          View Logs
-        </Button>
-      ),
+      cell: ({ row }) => {
+        const isLoading = loadingRunId === row.original.id;
+        return (
+          <Button
+            onClick={() => viewRunDetail(row.original.id)}
+            variant="outline"
+            size="sm"
+            disabled={isLoading}
+          >
+            {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            View Logs
+          </Button>
+        );
+      },
     },
   ];
 
@@ -392,29 +456,11 @@ export function RunHistoryTable({ refreshTrigger = 0 }: RunHistoryTableProps) {
 
             <div className="overflow-y-auto flex-1 space-y-3 pr-4">
               {Object.entries(selectedRunDetail.logs).map(([profileName, messages]) => (
-                <Card key={profileName} className="border">
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-base">{profileName}</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-sm space-y-1.5 font-mono bg-muted/50 p-3 rounded max-h-80 overflow-y-auto">
-                      {[...messages].reverse().map((msg, i) => (
-                        <div
-                          key={i}
-                          className={`${
-                            msg.status === "error"
-                              ? "text-red-600"
-                              : msg.status === "success"
-                              ? "text-green-600"
-                              : "text-muted-foreground"
-                          }`}
-                        >
-                          <span className="font-semibold">[{msg.stage}]</span> {msg.message}
-                        </div>
-                      ))}
-                    </div>
-                  </CardContent>
-                </Card>
+                <ProfileLogCard
+                  key={profileName}
+                  profileName={profileName}
+                  messages={messages}
+                />
               ))}
             </div>
           </DialogContent>

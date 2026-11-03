@@ -58,14 +58,13 @@ export function DocumentsSection({
     [onDocumentsChange]
   );
 
-  const handleDownloadDocument = useCallback(async (doc: Document, zip: boolean) => {
-    try {
-      await api.downloadDocument(doc.id, doc.name, zip);
-    } catch (error) {
-      toast.error("Failed to download document", {
-        description: error instanceof Error ? error.message : "Unknown error",
+  const handleDownloadDocument = useCallback((doc: Document, zip: boolean) => {
+    if (zip) {
+      toast.info("Preparing ZIP download...", {
+        description: "Your download will start in a moment",
       });
     }
+    api.downloadDocument(doc.id, doc.name, zip);
   }, []);
 
   const startUpdate = useCallback(async () => {

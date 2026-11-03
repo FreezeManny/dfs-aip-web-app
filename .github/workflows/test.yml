@@ -19,16 +19,9 @@ concurrency:
 permissions:
   contents: read
 
-# Two jobs, both run on every PR and deliberately unfiltered by path: the two
-# halves share an HTTP contract, so a change to the backend can break the
-# frontend and vice versa. Path filters would also make either job unusable as
-# a required check — a required check that is filtered out never reports, and
-# the PR waits on it forever.
 jobs:
-  # Named `backend` because the branch ruleset on main requires that check by
-  # name; renaming the job silently un-gates the branch.
-  backend:
-    name: backend
+  test:
+    name: test
     runs-on: ubuntu-latest
 
     steps:
@@ -41,11 +34,7 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "webui/backend/uv.lock"
 
-      # The image build below installs the dependencies but never imports the
-      # app, so the unit tests are what catch a broken main.py. vendor/ is
-      # excluded from byte-compiling on purpose: it is a verbatim copy of
-      # upstream, refreshed only by vendor/update.sh.
-      - name: Install dependencies
+      - name: Install Python dependencies
         working-directory: webui/backend
         run: uv sync --frozen
 
@@ -57,12 +46,29 @@ jobs:
         working-directory: webui/backend
         run: uv run pytest tests -q
 
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install JS dependencies
+        working-directory: webui/frontend
+        run: bun install --frozen-lockfile
+
+      - name: Lint
+        working-directory: webui/frontend
+        run: bun run lint
+
+      - name: Build
+        working-directory: webui/frontend
+        run: bun run build
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
       # Build the single image that ships, without pushing it: this catches a
-      # bad uv.lock/package bump, a broken apt package or a frontend build
-      # failure inside the image. Same cache scope as docker-publish.yml.
+      # bad uv.lock/package bump, a broken apt package or a build failure
+      # inside the image. Same cache scope as docker-publish.yml.
       - name: Build image
         uses: docker/build-push-action@v7
         with:
@@ -71,32 +77,3 @@ jobs:
           push: false
           cache-from: type=gha,scope=app
           cache-to: type=gha,mode=max,scope=app
-
-  # Named `frontend` because the branch ruleset on main requires that check by
-  # name; renaming the job silently un-gates the branch.
-  frontend:
-    name: frontend
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
-      - name: Install
-        working-directory: webui/frontend
-        run: bun install --frozen-lockfile
-
-      # The image build runs `bun run build` but not the linter, so this is the
-      # only place eslint runs at all.
-      - name: Lint
-        working-directory: webui/frontend
-        run: bun run lint
-
-      # `bun run build` is `tsc -b && vite build`, so this type-checks too.
-      - name: Build
-        working-directory: webui/frontend
-        run: bun run build

@@ -44,10 +44,10 @@ updates:
       prefix: "fix"
       include: "scope"
     groups:
-      backend:
+      python:
         patterns: ["*"]
 
-  # The `python` runtime image and the `node` build stage in webui/Dockerfile —
+  # The `python` runtime image and the `oven/bun` build stage in webui/Dockerfile —
   # the OS and interpreter users actually run.
   - package-ecosystem: "docker"
     directory: "/webui"
@@ -70,7 +70,7 @@ updates:
       prefix: "fix"
       include: "scope"
     groups:
-      frontend:
+      bun:
         patterns: ["*"]
     # TypeScript 7 is held back by the linter rather than by our code:
     # typescript-eslint declares `typescript: ">=4.8.4 <6.1.0"` and refuses to

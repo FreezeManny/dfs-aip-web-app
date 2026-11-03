@@ -1,7 +1,7 @@
-# Single-image build: Vite frontend and Python venv are built in separate stages,
+# Single-image build: Vite static assets and Python venv are built in separate stages,
 # then copied into a lean runtime image without bun or uv.
 # Build context must be the repository root.
-FROM oven/bun:1-alpine AS frontend-build
+FROM oven/bun:1-alpine AS ui-build
 WORKDIR /app
 
 COPY webui/frontend/package.json webui/frontend/bun.lock ./
@@ -10,7 +10,7 @@ RUN bun install --frozen-lockfile
 COPY webui/frontend/ .
 RUN bun run build
 
-FROM python:3.14-slim AS backend-build
+FROM python:3.14-slim AS venv-build
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 WORKDIR /app
 
@@ -29,13 +29,13 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PATH="/app/.venv/bin:$PATH"
-COPY --from=backend-build /app/.venv /app/.venv
+COPY --from=venv-build /app/.venv /app/.venv
 
 # Copy application code
 COPY vendor/dfs-aip/aip.py .
 COPY vendor/dfs-aip/aip/ aip/
 COPY webui/backend/main.py webui/backend/db.py webui/backend/rollover.py ./
-COPY --from=frontend-build /app/dist static/
+COPY --from=ui-build /app/dist static/
 
 # Create data directories
 RUN mkdir -p data output cache

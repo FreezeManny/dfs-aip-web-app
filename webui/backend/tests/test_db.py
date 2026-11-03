@@ -117,3 +117,13 @@ def test_migrate_json_is_idempotent(tmp_path):
     assert (tmp_path / "profiles.json.migrated").exists() and not profiles_file.exists()
     assert (runs_dir / "20260101_020000.json.migrated").exists()
     assert (runs_dir / "broken.json").exists()  # unreadable files are left alone
+
+
+def test_update_log_in_place():
+    db.start_run("r_progress")
+    log_id = db.add_log("r_progress", "vfr", "ocr", "Processing 0 / 10 pages (0%)", "info")
+    db.update_log(log_id, "Processing 5 / 10 pages (50%)", "info")
+    db.update_log(log_id, "Processed 10 / 10 pages (100%)", "info")
+    entries = db.get_run("r_progress")["logs"]["vfr"]
+    assert len(entries) == 1
+    assert entries[0]["message"] == "Processed 10 / 10 pages (100%)"

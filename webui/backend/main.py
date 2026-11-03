@@ -170,16 +170,33 @@ _update_lock_file: Optional[object] = None
 _current_run_id: Optional[str] = None  # id of the run in progress, if any
 
 
-def _log_progress(profile: str, stage: str, message: str = "", status: str = "info"):
-    """Log progress message with profile context (persisted live to the current run)"""
+def _log_progress(
+    profile: str,
+    stage: str,
+    message: str = "",
+    status: str = "info",
+    log_id: Optional[int] = None,
+    console: bool = True,
+) -> Optional[int]:
+    """Log progress message with profile context (persisted live to the current run).
+
+    When ``log_id`` is provided, updates that row in-place instead of inserting a new row.
+    """
     # status: "info", "warning", "error", "success"
     if _current_run_id is not None:
         try:
-            db.add_log(_current_run_id, profile or "", stage, message, status)
+            if log_id is not None:
+                db.update_log(log_id, message, status)
+                if console:
+                    logger.info(f"[{profile}] {stage}: {message}")
+                return log_id
+            log_id = db.add_log(_current_run_id, profile or "", stage, message, status)
         except Exception:
             logger.exception("Failed to persist run log")
-    
-    logger.info(f"[{profile}] {stage}: {message}")
+
+    if console:
+        logger.info(f"[{profile}] {stage}: {message}")
+    return log_id
 
 
 # ============== Models ==============
@@ -336,6 +353,26 @@ def delete_profile(name: str):
 
 # ============== Update ==============
 
+_OCR_PAGE_RE = re.compile(r"^\s*(\d+)\b")
+
+
+def _count_pdf_pages(pdf_path: Path) -> Optional[int]:
+    try:
+        import pikepdf
+
+        with pikepdf.open(pdf_path) as pdf:
+            return len(pdf.pages)
+    except Exception:
+        return None
+
+
+def _format_progress_bar(done: int, total: int, width: int = 20) -> tuple[int, str]:
+    pct = min(100, int(done * 100 / total))
+    filled = int(width * pct / 100)
+    bar = "#" * filled + "-" * (width - filled)
+    return pct, f"[{bar}] {pct:3d}% ({done}/{total} pages)"
+
+
 async def _generate_raw_pdf(profile: dict, raw_path: Path, cache_path: str, force: bool) -> bool:
     """Download pages and build the raw PDF. Written to a .partial file, renamed on success."""
     name = profile["name"]
@@ -353,16 +390,38 @@ async def _generate_raw_pdf(profile: dict, raw_path: Path, cache_path: str, forc
     )
     stderr_task = asyncio.create_task(proc.stderr.read())
 
-    # Stream stdout to show page downloads
+    # Stream stdout and update a single progress row in-place
     page_count = 0
+    last_page = ""
+    progress_log_id: Optional[int] = None
+    last_flush = 0.0
+    loop = asyncio.get_running_loop()
     while True:
         line = await proc.stdout.readline()
         if not line:
             break
-        page_name = line.decode().strip()
+        page_name = line.decode(errors="replace").strip()
         if page_name:
             page_count += 1
-            _log_progress(name, "pdf_gen", f"Downloaded page {page_count}: {page_name}", "info")
+            last_page = page_name
+            now = loop.time()
+            if progress_log_id is None or now - last_flush >= 0.25:
+                progress_log_id = _log_progress(
+                    name,
+                    "pdf_gen",
+                    f"Downloading page {page_count}: {page_name}",
+                    "info",
+                    log_id=progress_log_id,
+                )
+                last_flush = now
+    if page_count and progress_log_id is not None:
+        _log_progress(
+            name,
+            "pdf_gen",
+            f"Downloaded {page_count} page(s) (last: {last_page})",
+            "info",
+            log_id=progress_log_id,
+        )
 
     await proc.wait()
     stderr = await stderr_task
@@ -374,7 +433,7 @@ async def _generate_raw_pdf(profile: dict, raw_path: Path, cache_path: str, forc
         return True
 
     partial.unlink(missing_ok=True)
-    _log_progress(name, "pdf_gen", f"Failed: {stderr.decode()[-1500:]}", "error")
+    _log_progress(name, "pdf_gen", f"Failed: {stderr.decode(errors='replace')[-1500:]}", "error")
     return False
 
 
@@ -383,9 +442,17 @@ async def _ocr_pdf(name: str, raw_path: Path, ocr_path: Path) -> bool:
     partial = ocr_path.with_name(ocr_path.name + rollover.PARTIAL_SUFFIX)
     partial.unlink(missing_ok=True)
 
-    _log_progress(name, "ocr", f"Starting OCR: {raw_path.name} -> {ocr_path.name}", "info")
-    _log_progress(name, "ocr", f"Input PDF size: {raw_path.stat().st_size / (1024 * 1024):.1f} MB", "info")
-    _log_progress(name, "ocr", f"Using {settings.ocr_jobs} parallel worker(s)", "info")
+    total_pages = _count_pdf_pages(raw_path)
+    input_mb = raw_path.stat().st_size / (1024 * 1024)
+    pages_info = f", {total_pages} page(s)" if total_pages else ""
+    _log_progress(
+        name,
+        "ocr",
+        f"Starting OCR: {raw_path.name} -> {ocr_path.name} ({input_mb:.1f} MB{pages_info}, {settings.ocr_jobs} worker(s))",
+        "info",
+    )
+    _, init_msg = _format_progress_bar(0, total_pages) if total_pages else (0, "Processing pages...")
+    progress_log_id = _log_progress(name, "ocr", init_msg, "info")
 
     proc = await asyncio.create_subprocess_exec(
         OCRMYPDF_BIN, "--jobs", str(settings.ocr_jobs), "--verbose", "1", str(raw_path), str(partial),
@@ -393,21 +460,50 @@ async def _ocr_pdf(name: str, raw_path: Path, ocr_path: Path) -> bool:
     )
     stdout_task = asyncio.create_task(proc.stdout.read())
 
-    # Stream stderr to capture OCR progress
-    stderr_lines = []
+    # Stream stderr; update the progress bar whenever the percentage advances
+    stderr_lines: list[str] = []
+    seen_pages: set[int] = set()
+    last_pct = 0
     while True:
         line = await proc.stderr.readline()
         if not line:
             break
-        decoded = line.decode().strip()
+        decoded = line.decode(errors="replace").strip()
+        if not decoded:
+            continue
         stderr_lines.append(decoded)
-        if decoded:
-            _log_progress(name, "ocr", decoded, "info")
+        m = _OCR_PAGE_RE.match(decoded)
+        if m:
+            page_no = int(m.group(1))
+            if 1 <= page_no <= (total_pages or 100_000):
+                seen_pages.add(page_no)
+                if total_pages:
+                    pct, msg = _format_progress_bar(len(seen_pages), total_pages)
+                    if pct > last_pct:
+                        last_pct = pct
+                        progress_log_id = _log_progress(name, "ocr", msg, "info", log_id=progress_log_id)
+
     stdout = await stdout_task
     await proc.wait()
 
     if proc.returncode == 0 and partial.exists():
         os.replace(partial, ocr_path)
+        if total_pages:
+            _, done_msg = _format_progress_bar(total_pages, total_pages)
+            _log_progress(
+                name,
+                "ocr",
+                done_msg,
+                "info",
+                log_id=progress_log_id,
+                console=last_pct < 100,
+            )
+        elif seen_pages:
+            _log_progress(
+                name, "ocr", f"Processed {len(seen_pages)} page(s)", "info", log_id=progress_log_id
+            )
+        elif stderr_lines:
+            _log_progress(name, "ocr", stderr_lines[-1][:120], "info", log_id=progress_log_id)
         ocr_size_mb = ocr_path.stat().st_size / (1024 * 1024)
         _log_progress(name, "ocr", f"OCR complete ({ocr_size_mb:.1f} MB)", "success")
         return True
@@ -416,7 +512,7 @@ async def _ocr_pdf(name: str, raw_path: Path, ocr_path: Path) -> bool:
     _log_progress(name, "ocr", f"Process exited with code {proc.returncode}", "error")
     _log_progress(name, "ocr", f"Last 10 stderr lines: {stderr_lines[-10:]}", "error")
     if stdout:
-        _log_progress(name, "ocr", f"stdout: {stdout.decode()[:500]}", "error")
+        _log_progress(name, "ocr", f"stdout: {stdout.decode(errors='replace')[:500]}", "error")
     return False
 
 

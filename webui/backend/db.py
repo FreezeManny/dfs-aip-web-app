@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS run_logs (
     status  TEXT NOT NULL DEFAULT 'info'
 );
 CREATE INDEX IF NOT EXISTS idx_run_logs_run ON run_logs(run_id, id);
+CREATE INDEX IF NOT EXISTS idx_run_logs_run_profile ON run_logs(run_id, profile, id);
 CREATE INDEX IF NOT EXISTS idx_runs_started ON runs(started_at);
 
 CREATE TABLE IF NOT EXISTS documents (
@@ -72,6 +73,7 @@ def init(path: Path) -> None:
     _db_path = Path(path)
     _db_path.parent.mkdir(parents=True, exist_ok=True)
     with connect() as conn:
+        conn.execute("PRAGMA journal_mode=WAL")
         conn.executescript(_SCHEMA)
         version = conn.execute("PRAGMA user_version").fetchone()[0]
         if version < SCHEMA_VERSION:
@@ -85,7 +87,7 @@ def connect() -> Iterator[sqlite3.Connection]:
         raise RuntimeError("db.init() has not been called")
     conn = sqlite3.connect(_db_path, timeout=5)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA busy_timeout=5000")
     try:
@@ -172,14 +174,22 @@ def start_run(base_id: str) -> str:
     return run_id
 
 
-def add_log(run_id: str, profile: str, stage: str, message: str, status: str) -> str:
+def add_log(run_id: str, profile: str, stage: str, message: str, status: str) -> int:
     ts = _now()
     with connect() as conn:
-        conn.execute(
+        cur = conn.execute(
             "INSERT INTO run_logs (run_id, profile, ts, stage, message, status) VALUES (?, ?, ?, ?, ?, ?)",
             (run_id, profile, ts, stage, message, status),
         )
-    return ts
+        return int(cur.lastrowid)
+
+
+def update_log(log_id: int, message: str, status: str = "info") -> None:
+    with connect() as conn:
+        conn.execute(
+            "UPDATE run_logs SET ts = ?, message = ?, status = ? WHERE id = ?",
+            (_now(), message, status, log_id),
+        )
 
 
 def mark_pdf_created(run_id: str) -> None:
@@ -251,16 +261,19 @@ def get_run(run_id: str) -> Optional[dict]:
         if run is None:
             return None
         logs: dict[str, list[dict]] = {}
-        for l in conn.execute(
-            "SELECT * FROM run_logs WHERE run_id = ? AND profile != '' ORDER BY id", (run_id,)
-        ).fetchall():
-            logs.setdefault(l["profile"], []).append(
+        cur = conn.cursor()
+        cur.row_factory = None
+        for profile, ts, stage, message, status in cur.execute(
+            "SELECT profile, ts, stage, message, status FROM run_logs WHERE run_id = ? AND profile != '' ORDER BY id",
+            (run_id,),
+        ):
+            logs.setdefault(profile, []).append(
                 {
-                    "timestamp": l["ts"],
-                    "profile": l["profile"],
-                    "stage": l["stage"],
-                    "message": l["message"],
-                    "status": l["status"],
+                    "timestamp": ts,
+                    "profile": profile,
+                    "stage": stage,
+                    "message": message,
+                    "status": status,
                 }
             )
     return {

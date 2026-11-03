@@ -99,24 +99,13 @@ export const api = {
     });
   },
 
-  async downloadDocument(id: number, filename: string, zip = false): Promise<void> {
-    const res = await fetch(`${API_BASE}/documents/download`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, zip }),
-    });
-    if (!res.ok) {
-      throw new Error(`Download failed (${res.status} ${res.statusText})`);
-    }
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
+  downloadDocument(id: number, filename: string, zip = false): void {
     const a = document.createElement("a");
-    a.href = url;
+    a.href = `${API_BASE}/documents/${id}${zip ? "/zip" : ""}`;
     a.download = zip ? filename.replace(/\.pdf$/i, ".zip") : filename;
     document.body.appendChild(a);
     a.click();
     a.remove();
-    URL.revokeObjectURL(url);
   },
 
   // Runs

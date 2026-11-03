@@ -38,19 +38,16 @@ interface ProfilesSectionProps {
 
 export function ProfilesSection({ profiles, onProfilesChange }: ProfilesSectionProps) {
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [selectedProfile, setSelectedProfile] = useState<Profile | null>(null);
   const [newName, setNewName] = useState("");
   const [newFlightRule, setNewFlightRule] = useState<"vfr" | "ifr">("vfr");
   const [newFilters, setNewFilters] = useState("");
-  const [jsonPreview, setJsonPreview] = useState<{
-    title: string;
-    data: Profile | Profile[];
-  } | null>(null);
   const [copied, setCopied] = useState(false);
 
   const handleCopyJson = async () => {
-    if (!jsonPreview) return;
+    if (!selectedProfile) return;
     try {
-      await navigator.clipboard.writeText(JSON.stringify(jsonPreview.data, null, 2));
+      await navigator.clipboard.writeText(JSON.stringify(selectedProfile, null, 2));
       setCopied(true);
       toast.success("Copied JSON to clipboard");
       setTimeout(() => setCopied(false), 1500);
@@ -92,13 +89,6 @@ export function ProfilesSection({ profiles, onProfilesChange }: ProfilesSectionP
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Profiles</CardTitle>
           <div className="flex gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => setJsonPreview({ title: "Profiles JSON", data: profiles })}
-            >
-              <FileJson className="mr-2 h-4 w-4" /> View JSON
-            </Button>
             <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
               <DialogTrigger asChild>
                 <Button size="sm">
@@ -179,7 +169,7 @@ export function ProfilesSection({ profiles, onProfilesChange }: ProfilesSectionP
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={() => setJsonPreview({ title: `Profile JSON - ${p.name}`, data: p })}
+                        onClick={() => setSelectedProfile(p)}
                         title="View Profile JSON"
                       >
                         <FileJson className="h-4 w-4" />
@@ -199,26 +189,26 @@ export function ProfilesSection({ profiles, onProfilesChange }: ProfilesSectionP
         </CardContent>
       </Card>
 
-      {jsonPreview && (
+      {selectedProfile && (
         <Dialog
-          open={!!jsonPreview}
+          open={!!selectedProfile}
           onOpenChange={(open) => {
             if (!open) {
-              setJsonPreview(null);
+              setSelectedProfile(null);
               setCopied(false);
             }
           }}
         >
           <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
             <DialogHeader className="flex flex-row items-center justify-between pr-8 shrink-0">
-              <DialogTitle>{jsonPreview.title}</DialogTitle>
+              <DialogTitle>Profile JSON - {selectedProfile.name}</DialogTitle>
               <Button size="sm" variant="outline" onClick={handleCopyJson}>
                 {copied ? <Check className="mr-2 h-4 w-4" /> : <Copy className="mr-2 h-4 w-4" />}
                 {copied ? "Copied" : "Copy"}
               </Button>
             </DialogHeader>
             <pre className="text-sm font-mono bg-muted/50 p-4 rounded overflow-auto flex-1">
-              {JSON.stringify(jsonPreview.data, null, 2)}
+              {JSON.stringify(selectedProfile, null, 2)}
             </pre>
           </DialogContent>
         </Dialog>
