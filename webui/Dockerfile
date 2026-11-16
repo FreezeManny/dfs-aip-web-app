@@ -10,7 +10,7 @@ RUN bun install --frozen-lockfile
 COPY webui/frontend/ .
 RUN bun run build
 
-FROM python:3.14-slim AS venv-build
+FROM python:3.15-slim AS venv-build
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 WORKDIR /app
 
@@ -19,7 +19,7 @@ ENV UV_COMPILE_BYTECODE=1 \
 COPY webui/backend/pyproject.toml webui/backend/uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project --no-cache
 
-FROM python:3.14-slim AS runner
+FROM python:3.15-slim AS runner
 WORKDIR /app
 
 # Install system dependencies (OCR for PDF processing)
