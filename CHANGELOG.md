@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.1](https://github.com/FreezeManny/dfs-aip-web-app/compare/v1.0.0...v1.0.1) (2026-11-16)
+
+
+### Bug Fixes
+
+* **deps:** bump python from 3.14-slim to 3.15-slim in /webui ([#57](https://github.com/FreezeManny/dfs-aip-web-app/issues/57)) ([e28fb8c](https://github.com/FreezeManny/dfs-aip-web-app/commit/e28fb8ca9b1e13150da04d6a38f5a3d8eaf2a353))
+* **deps:** bump the python group in /webui/backend with 3 updates ([#59](https://github.com/FreezeManny/dfs-aip-web-app/issues/59)) ([9c7fe0d](https://github.com/FreezeManny/dfs-aip-web-app/commit/9c7fe0d9316e634b0a94363b39df4d4864d8ea7d))
+
 ## [1.0.0](https://github.com/FreezeManny/dfs-aip-web-app/compare/v1.1.2...v1.0.0) (2026-11-03)
 
 
