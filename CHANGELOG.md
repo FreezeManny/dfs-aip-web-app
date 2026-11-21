@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.2](https://github.com/FreezeManny/dfs-aip-web-app/compare/v1.0.1...v1.0.2) (2026-11-21)
+
+
+### Bug Fixes
+
+* **deps:** bump the bun group in /webui/frontend with 4 updates ([#61](https://github.com/FreezeManny/dfs-aip-web-app/issues/61)) ([c69b72c](https://github.com/FreezeManny/dfs-aip-web-app/commit/c69b72c2400b36de47aca332926b13ec64aaf124))
+* **deps:** bump the python group in /webui/backend with 4 updates ([#62](https://github.com/FreezeManny/dfs-aip-web-app/issues/62)) ([c158407](https://github.com/FreezeManny/dfs-aip-web-app/commit/c1584079a5afc90c13e8b599086adb01fff3cad3))
+
 ## [1.0.1](https://github.com/FreezeManny/dfs-aip-web-app/compare/v1.0.0...v1.0.1) (2026-11-16)
 
 
